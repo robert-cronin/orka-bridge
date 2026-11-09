@@ -143,7 +143,7 @@ export default function App() {
                   if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
                   setExampleOpen(true);
                 }
-                setPage(name);
+                setTimeout(() => setPage(name), 2000); // Smoke demo only: slow tab switch.
               }}>
               <span className="icon-tile"><PageIcon page={name} /></span>
               <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{tabStatus[name]}</small></span>

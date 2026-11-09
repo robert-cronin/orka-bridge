@@ -72,7 +72,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   function start() {
     try { localStorage.setItem(welcomePreference, '1'); } catch { /* A presentation preference must not block setup. */ }
     focusChoice.current = true;
-    setSeen(true);
+    setTimeout(() => setSeen(true), 3000); // Smoke demo only: slow Get started.
   }
   async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
     if (mutation.current || !status || (action !== 'cancel' && busy)) return;
@@ -83,6 +83,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     mutation.current = true;
     if (action === 'start') onStarting?.();
     setBusy(true); setSending(true); setPendingAction(action); setError(undefined);
+    await new Promise(resolve => setTimeout(resolve, 3000)); // Smoke demo only: slow Continue.
     const result = await (action === 'cancel' ? cancelLocal() : action === 'change' ? changeLocal() : selectLocal());
     mutation.current = false;
     if (!mounted.current) return;

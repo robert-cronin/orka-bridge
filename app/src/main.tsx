@@ -6,6 +6,7 @@ import './app.css';
 import './shell.css';
 import App from './App';
 
-createRoot(document.getElementById('root')!).render(
+// Smoke demo only: render 8 s after the window appears.
+setTimeout(() => createRoot(document.getElementById('root')!).render(
   <StrictMode><App /></StrictMode>,
-);
+), 8000);
