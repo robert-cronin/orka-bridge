@@ -62,7 +62,6 @@ for _ in 0..<30 {
     Thread.sleep(forTimeInterval: 1)
 }
 require(found, "Bridge native window did not appear")
-Thread.sleep(forTimeInterval: 2)
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
@@ -87,8 +86,18 @@ func key(_ code: CGKeyCode, shift: Bool = false) {
     }
     Thread.sleep(forTimeInterval: 0.3)
 }
-@discardableResult
-func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservation] {
+let pages = ["Overview", "Designer", "Clusters", "web-reader"]
+// Page headings sit below the tabs, so persistent nav labels do not count.
+func pageHeadings(_ observations: [VNRecognizedTextObservation]) -> Set<String> {
+    Set(observations.compactMap { observation -> String? in
+        let top = 1 - observation.boundingBox.maxY
+        guard top > 0.10 && top < 0.25,
+            let text = observation.topCandidates(1).first?.string,
+            pages.contains(text) else { return nil }
+        return text
+    })
+}
+func observe(_ name: String) throws -> [VNRecognizedTextObservation] {
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -110,6 +119,37 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     try transcript.write(toFile: record, atomically: true, encoding: .utf8)
     // Kept until the next capture, so later checks on these observations report it too.
     evidence = (record, transcript)
+    return observations
+}
+// A window can appear, and a click or key can land, before the page renders. Capture until
+// the page shows its heading, or a workspace screen in Clusters, then check that capture.
+// `marker` names text that tells the expected page apart from the one before it.
+@discardableResult
+func capture(_ name: String, _ page: String, showing marker: String? = nil) throws -> [VNRecognizedTextObservation] {
+    let expectedHeading = page == "Designer" ? "web-reader" : page
+    func shown(_ observations: [VNRecognizedTextObservation]) -> Bool {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        if let marker { return text.contains(marker) }
+        if page == "Clusters" {
+            return ["does a real job", "Where should your agents run", "Get your workspace ready"].contains { text.contains($0) }
+        }
+        return pageHeadings(observations).contains(expectedHeading)
+    }
+    let expected = marker.map { "\"\($0)\"" } ?? (page == "Clusters" ? "a workspace screen" : "the \(expectedHeading) heading")
+    let started = Date()
+    var observations = try observe(name)
+    var captures = 1
+    while !shown(observations) {
+        require(Date().timeIntervalSince(started) < 30, "\(page) page did not show \(expected) within 30 seconds")
+        Thread.sleep(forTimeInterval: 0.5)
+        observations = try observe(name)
+        captures += 1
+    }
+    if captures > 1 {
+        let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+        print("WAIT \(name): \(expected) shown after \(seconds) s and \(captures) captures")
+    }
+    let file = "\(output)/\(name).png"
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
         let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(NSColorSpace.deviceRGB)
         else { fail("Cannot sample native screenshot") }
@@ -144,19 +184,11 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native workspace screen observed")
         return observations
     }
-    let pages = ["Overview", "Designer", "Clusters", "web-reader"]
-    let headings = Set(observations.compactMap { observation -> String? in
-        let top = 1 - observation.boundingBox.maxY
-        guard top > 0.10 && top < 0.25,
-            let text = observation.topCandidates(1).first?.string,
-            pages.contains(text) else { return nil }
-        return text
-    })
+    let headings = pageHeadings(observations)
     // Negative control: persistent nav labels must not qualify as page headings.
     for wrong in pages where wrong != page && !(page == "Designer" && wrong == "web-reader") {
         require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
-    let expectedHeading = page == "Designer" ? "web-reader" : page
     require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
@@ -169,7 +201,7 @@ require(theme == "light" ? initiallyWelcome : !initiallyWelcome,
         "Expected a first-run welcome in light and a retained choice in dark")
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
     clickText("Get started", in: initial)
-    initial = try capture("chooser", "Clusters")
+    initial = try capture("chooser", "Clusters", showing: "Where should your agents run")
 }
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
     // The owned form works before any workspace exists. Exercise its real writer,
@@ -216,7 +248,7 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
     // Selecting the default radio does not start anything; Continue is explicit.
     clickText("Continue", in: initial)
 }
-try capture("local-selected", "Clusters")
+try capture("local-selected", "Clusters", showing: "Get your workspace ready")
 app.terminate()
 for _ in 0..<30 {
     if app.isTerminated { break }
@@ -230,7 +262,6 @@ for _ in 0..<30 {
     Thread.sleep(forTimeInterval: 1)
 }
 require(window() != nil, "Relaunched Bridge window did not appear")
-Thread.sleep(forTimeInterval: 2)
 let retained = try capture("choice-retained", "Clusters")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
@@ -255,7 +286,7 @@ let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRec
                         y: fileRect.minY + (1 - fileButton.boundingBox.midY) * fileRect.height)
 mouse(.leftMouseDown, filePoint); mouse(.leftMouseUp, filePoint)
 Thread.sleep(forTimeInterval: 0.5)
-let fileView = try capture("file-view", "Designer")
+let fileView = try capture("file-view", "Designer", showing: "web-reader.agent.md")
 require(fileView.contains { $0.topCandidates(1).first?.string == "Read-only during setup" },
         "Native setup preview is not labelled read-only")
 let ownedFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
