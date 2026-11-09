@@ -110,7 +110,11 @@ both system themes under `native-walk/` in the `bridge-macos-arm64` artifact.
 Review those captures for visible changes; they do not exercise a real VM or
 model connection.
 
-Each capture keeps the text OCR read beside it. A failed check prints its reason followed by the latest capture's text and adds the reason to that file, so an unrendered page can be told apart from a page showing a different state. The walk captures again for up to 30 seconds until the page it expects has rendered, then checks that capture.
+Each capture keeps the text OCR read beside it. A failed check prints its reason
+followed by the latest capture's text and adds the reason to that file, so an
+unrendered page can be told apart from a page showing a different state. The
+walk captures again for up to 30 seconds until the page it expects has
+rendered, then checks that capture.
 
 ## Platform builds
 
