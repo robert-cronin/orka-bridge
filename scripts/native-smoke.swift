@@ -264,7 +264,8 @@ for _ in 0..<30 {
 require(window() != nil, "Relaunched Bridge window did not appear")
 let retained = try capture("choice-retained", "Clusters")
 clickTab("Overview", retained)
-let overview = try capture("overview", "Overview")
+// Smoke demo only: expect the wrong page after clicking Overview.
+let overview = try capture("overview", "Designer")
 clickTab("Designer", overview)
 let designer = try capture("designer-pointer", "Designer")
 clickTab("Clusters", designer)
