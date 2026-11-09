@@ -13,6 +13,18 @@ fn fill_state(scratch: &mut File, state: &mut File) -> io::Result<()> {
     io::copy(scratch, state)?;
     state.sync_all()
 }
+#[cfg(any(windows, test))]
+fn finish_startup<T>(
+    result: Result<T, crate::runtime::types::RuntimeError>,
+    stop: impl FnOnce() -> io::Result<()>,
+) -> Result<T, crate::runtime::types::RuntimeError> {
+    result.map_err(|error| match stop() {
+        Ok(()) => error,
+        Err(cleanup) => crate::runtime::types::RuntimeError::StopUnconfirmed(format!(
+            "{error}; stopping the native child failed: {cleanup}"
+        )),
+    })
+}
 #[cfg(windows)]
 pub struct Diagnostics {
     pub rx: Vec<u8>,
@@ -168,42 +180,45 @@ mod native {
                 args,
                 endpoint,
             )?;
-            let stdio = child.take_stdio()?;
+            let stdio = finish_startup(child.take_stdio().map_err(Into::into), || child.abort())?;
             let owner = Arc::new(child);
-            let mut io = NativeTransport::new(owner.clone(), stdio)?;
-            *self
-                .diagnostics
-                .capture
-                .lock()
-                .map_err(|_| RuntimeError::Closed)? = Some(io.stderr_capture());
-            let until = io.prepare_stop()?;
-            owner.resume()?;
-            let mut output = Vec::new();
-            loop {
-                match io.receive(until) {
-                    Ok(frame) => {
-                        if output.len() + frame.bytes.len() > 128 * 1024 {
-                            return Err(
-                                std::io::Error::from(std::io::ErrorKind::InvalidData).into()
-                            );
-                        }
-                        output.extend(frame.bytes);
-                        if let Some(error) = frame.failure {
-                            if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                                break;
+            let result = (|| {
+                let mut io = NativeTransport::new(owner.clone(), stdio)?;
+                *self
+                    .diagnostics
+                    .capture
+                    .lock()
+                    .map_err(|_| RuntimeError::Closed)? = Some(io.stderr_capture());
+                let until = io.prepare_stop()?;
+                owner.resume()?;
+                let mut output = Vec::new();
+                loop {
+                    match io.receive(until) {
+                        Ok(frame) => {
+                            if output.len() + frame.bytes.len() > 128 * 1024 {
+                                return Err(
+                                    std::io::Error::from(std::io::ErrorKind::InvalidData).into()
+                                );
                             }
-                            return Err(error.into());
+                            output.extend(frame.bytes);
+                            if let Some(error) = frame.failure {
+                                if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                                    break;
+                                }
+                                return Err(error.into());
+                            }
                         }
+                        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(error) => return Err(error.into()),
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                    Err(error) => return Err(error.into()),
                 }
-            }
-            io.wait_for_stop()?;
-            if owner.exit_code()? != 0 {
-                return Err(std::io::Error::other("owned qemu-img failed").into());
-            }
-            Ok(output)
+                io.wait_for_stop()?;
+                if owner.exit_code()? != 0 {
+                    return Err(std::io::Error::other("owned qemu-img failed").into());
+                }
+                Ok(output)
+            })();
+            finish_startup(result, || owner.abort())
         }
         fn inspect(&self, spec: &LaunchSpec, path: &Path, size: u64) -> Result<(), RuntimeError> {
             let output = self.tool(
@@ -258,35 +273,40 @@ mod native {
                 endpoint,
                 boot,
             )?;
-            self.diagnostics.enter("Open QEMU standard I/O")?;
-            let stdio = child.take_stdio()?;
+            finish_startup(self.diagnostics.enter("Open QEMU standard I/O"), || {
+                child.abort()
+            })?;
+            let stdio = finish_startup(child.take_stdio().map_err(Into::into), || child.abort())?;
             let owner = Arc::new(child);
-            let transport = NativeTransport::new(owner.clone(), stdio)?;
-            *self
-                .diagnostics
-                .capture
-                .lock()
-                .map_err(|_| RuntimeError::Closed)? = Some(transport.stderr_capture());
-            self.diagnostics.enter("Resume QEMU process")?;
-            owner.resume()?;
-            self.diagnostics.enter("Negotiate QMP")?;
-            let until = Instant::now() + Duration::from_secs(30);
-            let mut qmp = Qmp::negotiate(transport, until)?;
-            self.diagnostics.enter("Check QEMU prelaunch status")?;
-            let status = qmp.query_status(until)?;
-            if status.running || status.status != "prelaunch" {
-                return Err(std::io::Error::other("QEMU did not remain prelaunch").into());
-            }
-            self.diagnostics.enter("Connect guest control")?;
-            let guest = owner.guest_stream()?;
-            self.diagnostics.enter("Start guest CPUs")?;
-            qmp.set_running(true, Instant::now() + Duration::from_secs(30))?;
-            self.diagnostics.enter("Establish guest session")?;
-            Ok(BackendHandle::new(Lease(Arc::new(Mutex::new(Vm {
-                owner,
-                qmp,
-                guest: Some(guest),
-            })))))
+            let result = (|| {
+                let transport = NativeTransport::new(owner.clone(), stdio)?;
+                *self
+                    .diagnostics
+                    .capture
+                    .lock()
+                    .map_err(|_| RuntimeError::Closed)? = Some(transport.stderr_capture());
+                self.diagnostics.enter("Resume QEMU process")?;
+                owner.resume()?;
+                self.diagnostics.enter("Negotiate QMP")?;
+                let until = Instant::now() + Duration::from_secs(30);
+                let mut qmp = Qmp::negotiate(transport, until)?;
+                self.diagnostics.enter("Check QEMU prelaunch status")?;
+                let status = qmp.query_status(until)?;
+                if status.running || status.status != "prelaunch" {
+                    return Err(std::io::Error::other("QEMU did not remain prelaunch").into());
+                }
+                self.diagnostics.enter("Connect guest control")?;
+                let guest = owner.guest_stream()?;
+                self.diagnostics.enter("Start guest CPUs")?;
+                qmp.set_running(true, Instant::now() + Duration::from_secs(30))?;
+                self.diagnostics.enter("Establish guest session")?;
+                Ok(BackendHandle::new(Lease(Arc::new(Mutex::new(Vm {
+                    owner: owner.clone(),
+                    qmp,
+                    guest: Some(guest),
+                })))))
+            })();
+            finish_startup(result, || owner.abort())
         }
     }
     impl Lease {
@@ -568,5 +588,27 @@ mod tests {
         state.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"prepared-qcow");
         assert!(fill_state(&mut scratch, &mut state).is_err());
+    }
+}
+
+#[cfg(test)]
+mod startup_cleanup_tests {
+    use super::*;
+    use crate::runtime::types::RuntimeError;
+    #[test]
+    fn startup_error_checks_stop_and_propagates_unconfirmed_custody() {
+        let error = finish_startup::<()>(Err(RuntimeError::Unavailable), || {
+            Err(io::Error::other("still running"))
+        })
+        .unwrap_err();
+        assert!(matches!(error, RuntimeError::StopUnconfirmed(_)));
+        assert!(matches!(
+            finish_startup::<()>(Err(RuntimeError::Unavailable), || Ok(())),
+            Err(RuntimeError::Unavailable)
+        ));
+        assert_eq!(
+            finish_startup(Ok(7), || panic!("a live lease must not stop")).unwrap(),
+            7
+        );
     }
 }

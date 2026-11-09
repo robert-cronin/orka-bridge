@@ -35,12 +35,89 @@ pub struct ModelConnection {
     pub selection: ModelSelection,
     pub generation: Uuid,
 }
+// Only closed diagnostic vocabulary crosses the guest boundary; raw kmx output never does.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelDiagnosticClass {
+    Process,
+    Timeout,
+    OutputLimit,
+    InvalidReply,
+    Exit,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStage {
+    Preflight,
+    Gateway,
+    Provider,
+    Model,
+    Finalize,
+    Other,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelErrorCode {
+    InvalidArguments,
+    ConfigurationInvalid,
+    Unsupported,
+    ConfirmationRequired,
+    CredentialUnavailable,
+    PermissionDenied,
+    DependencyUnavailable,
+    ExecutionUnknown,
+    Cancelled,
+    DeadlineExceeded,
+    OutputFailed,
+    OperationFailed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ModelStderr {
+    #[serde(rename = "The command arguments are invalid.")]
+    InvalidArguments,
+    #[serde(rename = "The configuration is invalid.")]
+    ConfigurationInvalid,
+    #[serde(rename = "The requested operation is unsupported.")]
+    Unsupported,
+    #[serde(rename = "Target confirmation is required.")]
+    ConfirmationRequired,
+    #[serde(rename = "A required credential is unavailable.")]
+    CredentialUnavailable,
+    #[serde(rename = "The operation was not permitted.")]
+    PermissionDenied,
+    #[serde(rename = "A required dependency is unavailable.")]
+    DependencyUnavailable,
+    #[serde(rename = "The execution outcome is unknown.")]
+    ExecutionUnknown,
+    #[serde(rename = "The operation was cancelled.")]
+    Cancelled,
+    #[serde(rename = "The operation deadline was exceeded.")]
+    DeadlineExceeded,
+    #[serde(rename = "Cannot write machine output.")]
+    OutputFailed,
+    #[serde(rename = "The operation failed.")]
+    OperationFailed,
+    #[serde(rename = "Stderr withheld.")]
+    Withheld,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelDiagnostic {
+    pub classification: ModelDiagnosticClass,
+    pub elapsed_ms: u64,
+    pub exit_code: Option<i32>,
+    pub stage: Option<ModelStage>,
+    pub error_code: Option<ModelErrorCode>,
+    pub stderr: Option<ModelStderr>,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelState {
     pub phase: ModelPhase,
     pub connection: Option<ModelConnection>,
     pub credential: CredentialState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<ModelDiagnostic>,
 }
 impl ModelState {
     pub(crate) fn valid(&self) -> bool {

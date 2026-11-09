@@ -66,8 +66,8 @@ pub fn create_verified<T>(
     if let Err(cleanup) = reap(&child) {
         // Quarantine capabilities when observed stop failed, just like RuntimeWorker.
         std::mem::forget(child);
-        return Err(io::Error::other(format!(
-            "{failure}; owned child stop unconfirmed: {cleanup}"
+        return Err(io::Error::other(crate::runtime::types::UnconfirmedStop(
+            format!("{failure}; owned child stop unconfirmed: {cleanup}"),
         )));
     }
     Err(failure)

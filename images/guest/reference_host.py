@@ -10,6 +10,9 @@ if __package__ or TYPE_CHECKING:
 else:
     from lock import require
 
+INFRASTRUCTURE_PHASES = (None, "identity-prepared", "cluster-ready", "cache-verified", "orka-ready", "infrastructure-ready")
+INFRASTRUCTURE_SERVICES = ("starting", "ready", "failed")
+
 
 def runtime_exchange(channel, boot, before_shutdown=None):
     frames = []
@@ -23,12 +26,12 @@ def runtime_exchange(channel, boot, before_shutdown=None):
             frames.append(value)
             return value
 
-        def request(id_, body):
+        def request(id_, body, expected=("ready", "error")):
             channel.sendall(json.dumps({"type": "request", "body": {"version": 1, "bootNonce": boot["bootNonce"], "requestId": id_, "body": body}}).encode() + b"\n")
             result = receive()
             require(result["type"] == "result" and result["body"].get("bootNonce") == boot["bootNonce"] and result["body"].get("requestId") == id_, "runtime result identity mismatch")
-            require(result["body"].get("body", {}).get("op") in ("ready", "error"), "unexpected runtime result")
-            return result["body"]["body"]["op"] == "ready"
+            require(result["body"].get("body", {}).get("op") in expected, "unexpected runtime result")
+            return result["body"]["body"]
 
         previous = None
         for stage, id_ in (("early", 1), ("serve", 2)):
@@ -39,12 +42,17 @@ def runtime_exchange(channel, boot, before_shutdown=None):
             require(nonce.int != 0 and nonce != previous, "runtime hello nonce mismatch")
             previous = nonce
             descriptor = {**boot, "stateCreation": boot["stateCreation"] if stage == "early" else "existing"}
-            if not request(id_, {"op": "boot", "body": descriptor}):
+            if request(id_, {"op": "boot", "body": descriptor})["op"] != "ready":
                 return frames
-        require(request(3, {"op": "readiness", "body": {}}), "runtime readiness refused")
+        # Reference host proves storage/endpoint only; the image verifier owns infrastructure
+        # success, so this validates the finite observation (kept in frames) without gating on it.
+        observation = request(3, {"op": "readiness", "body": {}}, ("infrastructure",))["body"]
+        require(isinstance(observation, dict) and set(observation) == {"phase", "service"}
+                and observation["phase"] in INFRASTRUCTURE_PHASES and observation["service"] in INFRASTRUCTURE_SERVICES,
+                "invalid infrastructure observation")
         if before_shutdown is not None:
             before_shutdown()
-            require(request(4, {"op": "shutdown", "body": {}}), "runtime shutdown refused")
+            require(request(4, {"op": "shutdown", "body": {}})["op"] == "ready", "runtime shutdown refused")
     return frames
 
 

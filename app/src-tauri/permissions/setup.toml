@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "setup"
-description = "Reads local runtime state, selects the local VM, reads native build requirements, reads and runs the fixed example and explicitly connects its model."
-commands.allow = ["setup_status", "setup_select_local", "setup_example", "setup_requirements", "setup_connect_model", "setup_run_status", "setup_run_example"]
+description = "Reads workspace state and build requirements, selects the local VM, edits the owned agent file, runs its checks and explicitly connects its model."
+commands.allow = ["setup_status", "setup_select_local", "setup_cancel_local", "setup_change_local", "setup_open_help", "setup_example", "setup_requirements", "setup_connect_model", "setup_run_status", "setup_run_example", "agent_open", "agent_save"]

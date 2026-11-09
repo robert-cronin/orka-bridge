@@ -59,9 +59,12 @@ fn read(root: &cap_std::fs::Dir, path: &Path) -> io::Result<Vec<u8>> {
 impl Snapshot {
     pub fn capture(root: &Path, doc: &AgentDocument) -> io::Result<Self> {
         let root = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+        Self::capture_dir(&root, doc)
+    }
+    pub(crate) fn capture_dir(root: &cap_std::fs::Dir, doc: &AgentDocument) -> io::Result<Self> {
         Self::collect(|slot| {
             read(
-                &root,
+                root,
                 match slot {
                     FileSlot::Agent => &doc.agent,
                     FileSlot::Tests => &doc.tests,

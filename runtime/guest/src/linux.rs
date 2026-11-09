@@ -589,6 +589,22 @@ impl BootSystem for Linux {
         }
         Ok(())
     }
+    fn infrastructure(&mut self, b: &BootDescriptor) -> io::Result<InfrastructureState> {
+        let unit = checked(
+            self.stage(),
+            "/usr/bin/systemctl",
+            &[
+                "show",
+                "bridge-infrastructure.service",
+                "--property=LoadState,ActiveState,SubState,Result,Job",
+            ],
+        )?;
+        crate::infrastructure::observe(
+            &self.state().join("bootstrap.json"),
+            b.installation_id,
+            &unit,
+        )
+    }
     fn shutdown(&mut self) -> io::Result<()> {
         Self::request_poweroff()
     }

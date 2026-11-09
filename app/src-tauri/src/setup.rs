@@ -13,6 +13,23 @@ pub enum SetupChoice {
     LocalVm,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspacePhase {
+    Verifying,
+    Materializing,
+    Starting,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProgress {
+    pub phase: WorkspacePhase,
+    pub bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub elapsed_ms: u64,
+    pub remaining_ms: Option<u64>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupSnapshot {
@@ -20,6 +37,8 @@ pub struct SetupSnapshot {
     local_vm: &'static str,
     local_vm_error: Option<String>,
     model: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_progress: Option<WorkspaceProgress>,
 }
 
 impl SetupSnapshot {
@@ -105,8 +124,22 @@ pub struct SetupError {
     // Only the finite call and numeric code may cross to the sign-in error UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     native: Option<StoreDiagnostic>,
+    #[serde(skip)]
+    diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>,
 }
 impl SetupError {
+    pub(crate) fn connect(diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>) -> Self {
+        Self {
+            diagnostic,
+            ..Self::model("modelConnect")
+        }
+    }
+    pub(crate) fn model_detail(&self) -> Option<String> {
+        self.diagnostic
+            .as_ref()
+            .and_then(|d| serde_json::to_string(d).ok())
+            .map(|detail| format!("{} Guest Connect: {detail}", self.message))
+    }
     pub(crate) fn store(error: StoreError) -> Self {
         Self {
             native: match error {
@@ -141,6 +174,7 @@ impl SetupError {
         Self {
             kind,
             message,
+            diagnostic: None,
             native: None,
         }
     }
@@ -149,10 +183,13 @@ fn storage_error() -> SetupError {
     SetupError {
         kind: "storage",
         message: "The setup choice could not be read or saved.",
+        diagnostic: None,
         native: None,
     }
 }
 
+#[path = "setup_help.rs"]
+pub mod help;
 #[path = "setup_model.rs"]
 mod model;
 pub use model::ModelSetupState;
@@ -178,6 +215,18 @@ impl SetupStore {
         tokio::task::spawn_blocking(move || self.select_local())
             .await
             .map_err(|_| storage_error())?
+    }
+    pub async fn clear_local_async(self: Arc<Self>) -> Result<SetupSnapshot, SetupError> {
+        tokio::task::spawn_blocking(move || {
+            let _access = self.access.lock().map_err(|_| storage_error())?;
+            let root = self.root.as_deref().ok_or_else(storage_error)?;
+            if selected(root)? {
+                fs::remove_file(root.join("local-vm")).map_err(|_| storage_error())?;
+            }
+            snapshot(root)
+        })
+        .await
+        .map_err(|_| storage_error())?
     }
     pub fn status(&self) -> Result<SetupSnapshot, SetupError> {
         let _access = self.access.lock().map_err(|_| storage_error())?;
@@ -236,6 +285,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         local_vm: "notIntegrated",
         local_vm_error: None,
         model: "locked",
+        workspace_progress: None,
     })
 }
 

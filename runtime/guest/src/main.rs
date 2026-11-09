@@ -673,6 +673,7 @@ mod tests {
             model::Outcome {
                 connection: Some(connection),
                 success: true,
+                diagnostic: None,
             }
         }
     }
@@ -795,6 +796,7 @@ mod tests {
                 model::Outcome {
                     connection: None,
                     success: false,
+                    diagnostic: None,
                 }
             }
         }
@@ -1291,6 +1293,9 @@ mod tests {
     fn local_socket_orka_is_refused_before_operations_even_with_a_valid_id() {
         struct NoSystem;
         impl BootSystem for NoSystem {
+            fn infrastructure(&mut self, _: &BootDescriptor) -> io::Result<InfrastructureState> {
+                unreachable!()
+            }
             fn probe(&mut self) -> io::Result<early::Disk> {
                 unreachable!()
             }

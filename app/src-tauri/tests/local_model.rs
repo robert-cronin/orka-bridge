@@ -39,7 +39,7 @@ impl LocalFactory for Factory {
     fn launch(
         &self,
         _: watch::Receiver<bool>,
-        _: Arc<dyn Fn(LocalVmStatus) + Send + Sync>,
+        _: Arc<dyn Fn(bridge_engine::local_vm::LocalProgress) + Send + Sync>,
     ) -> StartFuture<'_> {
         let session = Session(
             self.0.clone(),

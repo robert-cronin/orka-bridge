@@ -49,10 +49,9 @@ pub fn establish(
     let result = exchange(worker, channel, nonce, host_utc);
     if let Err(ref exchange) = result {
         if let Err(stop) = worker.stop() {
-            return Err(io::Error::other(format!(
+            return Err(RuntimeError::StopUnconfirmed(format!(
                 "boot exchange failed: {exchange}; stop unobserved: {stop}"
-            ))
-            .into());
+            )));
         }
     }
     result

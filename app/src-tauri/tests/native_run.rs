@@ -247,18 +247,29 @@ impl Fixture {
                         }
                     }
                 }
-                if b.fault == "slow" {
+                if b.fault == "slow"
+                    || b.fault == "slow-result"
+                        && path.split('?').next().unwrap().ends_with("/result")
+                    || b.fault == "slow-events"
+                        && path.split('?').next().unwrap().ends_with("/events")
+                {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 let payload = if b.fault == "oversize" {
                     "x".repeat(1024 * 1024 + 1)
-                } else if b.fault == "malformed" {
+                } else if matches!(b.fault, "malformed" | "401" | "403") {
                     "secret-server-body".into()
                 } else {
                     response.to_string()
                 };
                 if b.fault == "redirect" {
                     status = 307;
+                }
+                if b.fault == "401" {
+                    status = 401;
+                }
+                if b.fault == "403" {
+                    status = 403;
                 }
                 let message = format!("HTTP/1.1 {status} fixture\r\nContent-Type: application/json\r\nLocation: /credential-leak\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
                 let _ = socket.write_all(message.as_bytes()).await;
@@ -285,6 +296,313 @@ impl Fixture {
 }
 fn pair() -> ParsedPair {
     ParsedPair::parse(AGENT.as_bytes(), TESTS.as_bytes()).unwrap()
+}
+
+#[tokio::test]
+async fn http_authentication_and_permission_are_finite_without_error_bodies() {
+    for (fault, kind) in [
+        ("401", ErrorKind::Authentication),
+        ("403", ErrorKind::Permission),
+    ] {
+        let fixture = Fixture::start(Behavior {
+            fault,
+            ..Behavior::default()
+        })
+        .await;
+        let error = fixture.runner().submit(pair()).await.unwrap_err();
+        assert_eq!(error.kind, kind);
+        assert!(error.pending.is_some());
+        assert!(!format!("{error:?}").contains("secret-server-body"));
+        assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    }
+}
+
+// Fixture at the I/O boundary: real preparation, admission and receipt handling.
+struct StoppableTransport {
+    posts: Arc<Mutex<Vec<Value>>>,
+    stop: tokio::sync::watch::Sender<bool>,
+    stop_after: usize,
+    pending_at: usize,
+    cap: Option<usize>,
+    stop_before_poll: bool,
+}
+impl RunTransport for StoppableTransport {
+    fn namespace(&self) -> &str {
+        "orka-system"
+    }
+    fn provider(&self) -> &str {
+        "copilot"
+    }
+    fn limits(&self) -> RunLimits {
+        RunLimits::default()
+    }
+    fn max_create_body_bytes(&self) -> Option<usize> {
+        self.cap
+    }
+    fn request<'a>(
+        &'a self,
+        path: &'a str,
+        _: Option<u64>,
+        body: Option<&'a Value>,
+        _: tokio::time::Instant,
+    ) -> RunFuture<'a> {
+        if self.stop_before_poll {
+            self.stop.send(true).unwrap();
+        }
+        Box::pin(async move {
+            let body = body.unwrap();
+            let count = {
+                let mut posts = self.posts.lock().unwrap();
+                posts.push(body.clone());
+                posts.len()
+            };
+            if count == self.stop_after || count == self.pending_at {
+                self.stop.send(true).unwrap();
+            }
+            if count == self.pending_at {
+                std::future::pending::<()>().await;
+            }
+            // No await here: mirrors the synchronous VM request's returning acknowledgment.
+            let mut spec = body["spec"].clone();
+            if path == "tasks" {
+                spec["timeout"] = json!("2m0s");
+                spec["retryPolicy"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("maxRetries");
+            }
+            Ok(
+                json!({"metadata":{"name":body["name"],"namespace":body["namespace"],"uid":format!("uid-{count}"),"generation":1},"spec":spec,"kind":if path == "agents" {"Agent"} else {"Task"}}),
+            )
+        })
+    }
+}
+fn stopping_runner(
+    stop_after: usize,
+    pending_at: usize,
+    cap: Option<usize>,
+) -> (
+    NativeRunner<'static>,
+    tokio::sync::watch::Receiver<bool>,
+    Arc<Mutex<Vec<Value>>>,
+) {
+    let (stop, receive) = tokio::sync::watch::channel(false);
+    let posts = Arc::new(Mutex::new(Vec::new()));
+    (
+        NativeRunner::with_transport(StoppableTransport {
+            posts: posts.clone(),
+            stop,
+            stop_after,
+            pending_at,
+            cap,
+            stop_before_poll: false,
+        }),
+        receive,
+        posts,
+    )
+}
+fn two_cases() -> ParsedPair {
+    let tests = format!("{TESTS}\n```yaml agent-test\nid: second\ninput: next\nassertions:\n - id: next-answer\n   type: contains\n   value: next\n```\n");
+    ParsedPair::parse(AGENT.as_bytes(), tests.as_bytes()).unwrap()
+}
+#[tokio::test]
+async fn planned_agent_before_post() {
+    let fixture = Fixture::start(Behavior::default()).await;
+    let runner = fixture.runner();
+    let prepared = runner.prepare(pair()).unwrap();
+    let name = prepared.agent_name().to_owned();
+    assert!(name.starts_with("bridge-run-"));
+    assert_eq!(prepared.snapshot(), pair().snapshot());
+    assert_eq!(fixture.requests.lock().unwrap().len(), 0);
+    let (_stop, receive) = tokio::sync::watch::channel(false);
+    let handle = runner.submit_prepared(prepared, receive).await.unwrap();
+    assert_eq!(handle.agent().unwrap().name, name);
+}
+#[tokio::test]
+async fn stop_between_tasks_keeps_receipts() {
+    let (runner, stop, posts) = stopping_runner(2, 0, None);
+    let error = runner
+        .submit_prepared(runner.prepare(two_cases()).unwrap(), stop)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert_eq!(error.handle.agent().unwrap().uid, "uid-1");
+    assert_eq!(error.handle.tasks().len(), 1);
+    assert_eq!(error.handle.tasks()[0].uid, "uid-2");
+    assert!(error.pending.is_none());
+    assert_eq!(posts.lock().unwrap().len(), 2);
+}
+#[tokio::test]
+async fn stop_inflight_keeps_pending_name() {
+    for pending_at in [1, 2] {
+        let (runner, stop, posts) = stopping_runner(0, pending_at, None);
+        let prepared = runner.prepare(two_cases()).unwrap();
+        let planned = prepared.agent_name().to_owned();
+        let error = runner.submit_prepared(prepared, stop).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Stopped);
+        let pending = error.pending.unwrap();
+        assert_eq!(pending.name, posts.lock().unwrap()[pending_at - 1]["name"]);
+        assert_eq!(pending.kind, if pending_at == 1 { "Agent" } else { "Task" });
+        if pending_at == 1 {
+            assert_eq!(pending.name, planned);
+        }
+        assert_eq!(error.handle.agent().is_some(), pending_at == 2);
+        assert!(error.handle.tasks().is_empty());
+        assert_eq!(posts.lock().unwrap().len(), pending_at);
+    }
+}
+#[tokio::test]
+async fn stop_before_request_poll_has_no_pending_mutation() {
+    let (stop, receive) = tokio::sync::watch::channel(false);
+    let posts = Arc::new(Mutex::new(Vec::new()));
+    let runner = NativeRunner::with_transport(StoppableTransport {
+        posts: posts.clone(),
+        stop,
+        stop_after: 0,
+        pending_at: 0,
+        cap: None,
+        stop_before_poll: true,
+    });
+    let error = runner
+        .submit_prepared(runner.prepare(pair()).unwrap(), receive)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert!(posts.lock().unwrap().is_empty());
+    assert!(error.pending.is_none());
+    assert!(error.handle.agent().is_none());
+}
+
+#[tokio::test]
+async fn stopped_before_submit_has_no_possibly_created_name() {
+    let (runner, receive, posts) = stopping_runner(0, 0, None);
+    let (stop, already) = tokio::sync::watch::channel(true);
+    let error = runner
+        .submit_prepared(runner.prepare(pair()).unwrap(), already)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert!(error.pending.is_none());
+    assert!(posts.lock().unwrap().is_empty());
+    drop((receive, stop));
+}
+#[tokio::test]
+async fn stopped_observation_retains_receipts_and_issues_no_more_gets() {
+    let fixture = Fixture::start(Behavior::default()).await;
+    let runner = fixture.runner();
+    let handle = runner.submit(pair()).await.unwrap();
+    let (_stop, receive) = tokio::sync::watch::channel(true);
+    let before = fixture.requests.lock().unwrap().len();
+    let error = runner
+        .observe_stoppable(&handle, receive)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert_eq!(error.handle.tasks()[0].uid, handle.tasks()[0].uid);
+    assert!(error.pending.is_none());
+    assert_eq!(fixture.requests.lock().unwrap().len(), before);
+}
+#[tokio::test]
+async fn stop_during_optional_evidence_is_not_swallowed() {
+    for (fault, suffix) in [("slow-result", "/result"), ("slow-events", "/events")] {
+        let fixture = Fixture::start(Behavior {
+            fault,
+            ..Behavior::default()
+        })
+        .await;
+        let runner = NativeRunner::new(
+            NativeRunTarget::new(&fixture.url, "sandbox", "provider", None).unwrap(),
+            RunLimits {
+                request_timeout: Duration::from_secs(1),
+                ..RunLimits::default()
+            },
+        )
+        .unwrap();
+        let handle = runner.submit(pair()).await.unwrap();
+        let (stop, receive) = tokio::sync::watch::channel(false);
+        let requests = fixture.requests.clone();
+        let stopper = tokio::spawn(async move {
+            for _ in 0..1000 {
+                if requests.lock().unwrap().iter().any(|(p, _)| {
+                    p.starts_with("GET") && p.split('?').next().unwrap().ends_with(suffix)
+                }) {
+                    stop.send(true).unwrap();
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            panic!("evidence request never arrived");
+        });
+        let error = runner
+            .observe_stoppable(&handle, receive)
+            .await
+            .unwrap_err();
+        stopper.await.unwrap();
+        assert_eq!(error.kind, ErrorKind::Stopped);
+        assert_eq!(error.handle.tasks()[0].uid, handle.tasks()[0].uid);
+        let requests = fixture.requests.lock().unwrap();
+        assert!(requests
+            .last()
+            .unwrap()
+            .0
+            .split('?')
+            .next()
+            .unwrap()
+            .ends_with(suffix));
+    }
+}
+
+#[tokio::test]
+async fn prepared_run_cannot_be_submitted_by_another_runner() {
+    let (one, _, _) = stopping_runner(0, 0, None);
+    let (two, receive, posts) = stopping_runner(0, 0, None);
+    let error = two
+        .submit_prepared(one.prepare(pair()).unwrap(), receive)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Configuration);
+    assert!(posts.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn vm_cap_all_bodies_before_any_post() {
+    // A large *later Task*, not just the Agent, must refuse the entire submission.
+    let big_tests = TESTS.replace("Fetch https://example.test/checksum", &"\"".repeat(33000));
+    let large_task = ParsedPair::parse(AGENT.as_bytes(), big_tests.as_bytes()).unwrap();
+    assert!(large_task.cases()[0].input().len() < 65536);
+    let large_agent = ParsedPair::parse(
+        format!("{AGENT}{}", "x".repeat(65536)).as_bytes(),
+        TESTS.as_bytes(),
+    )
+    .unwrap();
+    for pair in [large_task, large_agent] {
+        let (runner, _, posts) = stopping_runner(0, 0, Some(65536));
+        assert!(matches!(
+            runner.prepare(pair.clone()),
+            Err(ErrorKind::Source)
+        ));
+        let error = runner.submit(pair).await.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Source);
+        assert!(error.pending.is_none());
+        assert!(error.handle.agent().is_none());
+        assert!(posts.lock().unwrap().is_empty());
+    }
+}
+#[tokio::test]
+async fn remote_body_over_64k_not_vm_refused() {
+    let fixture = Fixture::start(Behavior::default()).await;
+    let runner = fixture.runner();
+    let source = format!("{AGENT}{}", "x".repeat(65536));
+    let handle = runner
+        .submit(ParsedPair::parse(source.as_bytes(), TESTS.as_bytes()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(handle.tasks().len(), 1);
+    assert!(
+        serde_json::to_vec(&fixture.requests.lock().unwrap()[0].1)
+            .unwrap()
+            .len()
+            > 65536
+    );
 }
 #[tokio::test]
 async fn native_runner_accepts_a_borrowed_transport_without_a_second_http_target() {

@@ -125,15 +125,17 @@ pub fn handle(
     r: &WireRequest,
 ) -> (ResultBody, bool) {
     match &r.body {
-        RequestBody::Readiness {} => match system.ready(b) {
-            Ok(()) => (ResultBody::Ready {}, false),
-            Err(_) => (
-                ResultBody::Error {
-                    code: ErrorCode::IncompatibleState,
-                },
-                false,
-            ),
-        },
+        RequestBody::Readiness {} => {
+            match system.ready(b).and_then(|()| system.infrastructure(b)) {
+                Ok(state) => (ResultBody::Infrastructure(state), false),
+                Err(_) => (
+                    ResultBody::Error {
+                        code: ErrorCode::IncompatibleState,
+                    },
+                    false,
+                ),
+            }
+        }
         RequestBody::Shutdown {} => match system.shutdown() {
             Ok(()) => (ResultBody::Ready {}, true),
             Err(_) => (
@@ -211,6 +213,7 @@ mod credential_tests {
                     ResultBody::ModelState(ModelState {
                         phase: ModelPhase::Idle,
                         connection: None,
+                        diagnostic: None,
                         credential: CredentialState {
                             profile: CREDENTIAL_PROFILE,
                             generation: None,

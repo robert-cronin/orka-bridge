@@ -108,7 +108,10 @@ fn buffered_boot_handoff_preserves_ready2_read_ahead_for_the_client() {
             version: VERSION,
             boot_nonce: nonce,
             request_id: 3,
-            body: ResultBody::Ready {},
+            body: ResultBody::Infrastructure(InfrastructureState {
+                phase: Some(BootstrapPhase::ClusterReady),
+                service: InfrastructureService::Starting,
+            }),
         }))
         .unwrap(),
     );
@@ -122,7 +125,10 @@ fn buffered_boot_handoff_preserves_ready2_read_ahead_for_the_client() {
         123,
     )
     .unwrap();
-    client.readiness().unwrap();
+    assert_eq!(
+        serde_json::to_value(client.readiness().unwrap()).unwrap(),
+        serde_json::json!({"phase": "cluster-ready", "service": "starting"})
+    );
     let frames: Vec<Frame> = writes
         .lock()
         .unwrap()
@@ -406,7 +412,14 @@ fn readiness_refusal_keeps_the_sequenced_channel_open() {
                 code: ErrorCode::Unavailable,
             },
         ),
-        (4, ResultBody::Ready {}),
+        (
+            4,
+            ResultBody::Infrastructure(InfrastructureState {
+                phase: Some(BootstrapPhase::InfrastructureReady),
+                service: InfrastructureService::Ready,
+            }),
+        ),
+        (5, ResultBody::Ready {}),
     ] {
         bytes.extend(
             encode(&Frame::Result(WireResult {
@@ -424,7 +437,14 @@ fn readiness_refusal_keeps_the_sequenced_channel_open() {
     )
     .unwrap();
     assert!(client.readiness().is_err());
-    client.readiness().unwrap();
+    assert_eq!(
+        serde_json::to_value(client.readiness().unwrap()).unwrap(),
+        serde_json::json!({"phase": "infrastructure-ready", "service": "ready"})
+    );
+    assert!(
+        client.readiness().is_err(),
+        "legacy storage Ready cannot unlock Orka"
+    );
 }
 #[test]
 fn exclusive_directory_lock_and_persistent_random_identity() {
@@ -487,6 +507,25 @@ fn single_component_relative_root_is_normalized_before_creation() {
     assert!(Journal::open(relative).is_ok());
 }
 
+#[test]
+fn handshake_stop_failure_is_typed_even_if_a_later_stop_succeeds() {
+    let (_temp, journal) = create();
+    let backend = Backend::default();
+    let fail = backend.fail_stop.clone();
+    let mut worker = make_worker(Box::new(backend), journal);
+    worker.start().unwrap();
+    *fail.lock().unwrap() = true;
+    let error = fixture_runtime::handshake::establish(
+        &mut worker,
+        Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        0,
+    )
+    .err()
+    .unwrap();
+    assert!(matches!(error, RuntimeError::StopUnconfirmed(_)));
+    *fail.lock().unwrap() = false;
+    worker.stop().unwrap();
+}
 #[derive(Clone, Default)]
 struct Backend {
     events: Arc<Mutex<Vec<&'static str>>>,

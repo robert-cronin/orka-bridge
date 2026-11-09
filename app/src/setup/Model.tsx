@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { connectModel } from './modelState';
 
 export type ModelState = 'idle' | 'connecting' | 'connected' | 'failed';
-export default function Model({ enabled, paused = false, onState }: { enabled: boolean; paused?: boolean; onState?: (state: ModelState) => void }) {
+export default function Model({ enabled, paused = false, onState, onSettled }: {
+  enabled: boolean; paused?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
@@ -27,6 +29,7 @@ export default function Model({ enabled, paused = false, onState }: { enabled: b
     active.current = false; setBusy(false);
     if (result.ok) setReady(true);
     else setError(result.message);
+    onSettled?.();
   }
   return <section className="card setup-model" aria-labelledby="model-title" aria-busy={busy}>
     <h2 id="model-title">{enabled ? 'Connect a model' : 'Model connection locked'}</h2>

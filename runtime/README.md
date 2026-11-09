@@ -2,7 +2,10 @@
 
 The separate Linux-only `bridge-guest` package shares the pure protocol crate,
 not Tauri. It has only `--early`, `--serve` and harmless `--help` modes.
-Readiness means validated identity, mounts and endpoint, not cluster or Orka health.
+Boot's Ready acknowledgment validates identity, mounts and the endpoint, not Orka health.
+Post-boot Readiness also reports the matching bootstrap phase and current infrastructure
+service state. Native startup waits for `infrastructure-ready` and successful service
+completion before unlocking model setup. Older storage-only replies cannot satisfy this check.
 Serve accepts digest-committed agent/test snapshots and the delivered typed kmx
 Version and ListAgents actions. File-Test, mutations, remote cancellation and model
 credentials remain unavailable until their upstream contracts are delivered.

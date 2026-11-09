@@ -73,5 +73,51 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .setup-button:not(:disabled):hover { background: var(--color-hover); }
 .setup-button:disabled { cursor: not-allowed; color: var(--color-text-secondary); }
 .example-source { font-family: var(--font-mono); font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 28rem; margin: 0; }
+.designer-heading { align-items: flex-start; gap: 20px; }
+.agent-heading-copy { min-width: 0; }
+.agent-heading-copy h1, .agent-heading-copy p { overflow-wrap: anywhere; }
+.agent-heading-copy p { margin-top: 6px; max-width: 65ch; }
+.view-switch { display: inline-flex; padding: 3px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-chrome); }
+.view-switch button { border: 0; border-radius: 4px; background: transparent; padding: 4px 11px; color: var(--color-text-secondary); }
+.view-switch button[aria-pressed="true"] { background: var(--color-card); color: var(--color-text); box-shadow: 0 1px 3px var(--color-border-strong); }
+.view-switch button:disabled { cursor: not-allowed; }
+.designer-file, .designer-checks { margin-top: 20px; display: grid; gap: 14px; }
+.file-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.file-toolbar h2 { overflow-wrap: anywhere; }
+.designer-file p { max-width: 70ch; }
+.agent-editor { display: block; width: 100%; min-height: 23rem; resize: vertical; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-page); color: var(--color-text); font: 400 0.8125rem/1.7 var(--font-mono); tab-size: 2; }
+.agent-parts { display: grid; gap: 24px; }
+.agent-part { display: grid; gap: 8px; min-width: 0; }
+.agent-part label, .agent-part h3 { font-size: 0.9375rem; font-weight: 600; margin: 0; }
+.agent-part p { margin: 0; }
+.instructions-editor, .description-editor, .tool-picker input { width: 100%; padding: 12px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-page); color: var(--color-text); font: inherit; line-height: 1.7; }
+.instructions-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.instructions-editor { min-height: 10rem; resize: vertical; }
+.description-editor { min-height: 5rem; resize: vertical; }
+.agent-tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.tool-pill { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-chrome); overflow-wrap: anywhere; min-width: 0; }
+.tool-pill code, .tool-picker code { color: var(--color-text-secondary); font: 0.75rem var(--font-mono); overflow-wrap: anywhere; }
+.part-button { border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 7px 10px; background: var(--color-chrome); color: var(--color-text); font: inherit; max-width: 100%; }
+.part-button:not(:disabled):hover, .tool-picker li button:hover { background: var(--color-hover); }
+.part-button:disabled, .agent-parts textarea:disabled { color: var(--color-text-secondary); cursor: not-allowed; opacity: 1; }
+.tool-remove { border: 0; background: transparent; padding: 0 4px; color: var(--color-text-secondary); font: inherit; }
+.tool-picker { margin-top: 12px; display: grid; gap: 10px; border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; }
+.tool-picker ul { margin: 0; padding: 0; list-style: none; max-height: 14rem; overflow: auto; }
+.tool-picker li button { width: 100%; display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; text-align: left; padding: 10px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--color-text); font: inherit; }
+.agent-parts .control-tip { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; }
+.agent-settings summary { cursor: pointer; color: var(--color-text-secondary); }
+.agent-settings .agent-part { margin-top: 18px; }
+.agent-settings .coming-control { display: block; }
+.agent-path { overflow-wrap: anywhere; font: 0.8125rem/1.7 var(--font-mono); }
+.save-error { color: var(--color-status-failed); }
+.check-source { border-top: 1px solid var(--color-border); padding-top: 14px; }
+.check-source summary { cursor: pointer; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.check-source pre { margin-top: 12px; }
+.designer-checks h3 { font-size: 1rem; margin: 0 0 8px; }
+.designer-checks .example-run > p { margin-top: 8px; max-width: 70ch; }
+@media (max-width: 1000px) {
+  .designer-heading { flex-wrap: wrap; }
+  .designer-heading .heading-actions { margin-left: 0; flex-wrap: wrap; }
+}
 .engine-diagnostics { max-width: 760px; margin-top: 16px; }
 .engine-diagnostics summary { cursor: pointer; color: var(--color-text-secondary); }

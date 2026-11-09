@@ -50,6 +50,16 @@ test('no-argument selection requires an acknowledgement of that selection', asyn
   expect((await selectLocal()).ok).toBe(false);
   expect(ipc).toHaveBeenCalledExactlyOnceWith('setup_select_local', {});
 });
+test.each([null, { phase: 'materializing', bytes: 10, totalBytes: 20, elapsedMs: 1000, remainingMs: 1000 }, { phase: 'verifying', bytes: null, totalBytes: null, elapsedMs: 5, remainingMs: null }])('accepts optional native workspace progress %j', async workspaceProgress => {
+  vi.stubGlobal('isTauri', true);
+  const value = { selected: 'localVm', localVm: 'installing', model: 'locked', workspaceProgress };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+});
+test.each([{ phase: 'materializing', bytes: -1, totalBytes: 20, elapsedMs: 1, remainingMs: null }, { phase: 'materializing', bytes: 21, totalBytes: 20, elapsedMs: 1, remainingMs: null }, { phase: 'download', bytes: 10, totalBytes: 20, elapsedMs: 1, remainingMs: null }, { phase: 'verifying', bytes: null, totalBytes: null, elapsedMs: 1, remainingMs: 'SECRET_MARKER' }])('rejects malformed native workspace progress %j', async workspaceProgress => {
+  vi.stubGlobal('isTauri', true); mockIPC(() => ({ ...snapshot, workspaceProgress }));
+  expect((await setupStatus()).ok).toBe(false);
+});
 test('IPC errors cannot leak rejected messages or claim availability', async () => {
   vi.stubGlobal('isTauri', true); mockIPC(() => Promise.reject('SECRET_MARKER'));
   expect(await setupStatus()).toEqual({ ok: false, message: 'The setup choice could not be read or saved.' });

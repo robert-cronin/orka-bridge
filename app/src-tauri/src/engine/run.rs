@@ -9,16 +9,19 @@ pub use http::{NativeRunTarget, RunFuture, RunLimits, RunTransport};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fmt;
-use tokio::time::Instant;
+use tokio::{sync::watch, time::Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
     Source,
     Configuration,
     Transport,
+    Authentication,
+    Permission,
     Deadline,
     Response,
     Identity,
+    Stopped,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +51,16 @@ pub struct CaseReport {
 pub struct RunReport {
     pub cases: Vec<CaseReport>,
     pub verdict: Verdict,
+}
+// Missing optional evidence remains unknown; Stop must not be swallowed as
+// an unavailable answer/event page and continue issuing requests.
+fn optional_evidence<T>(result: Result<T, ErrorKind>) -> Result<Option<T>, ErrorKind> {
+    match result {
+        Err(kind @ (ErrorKind::Stopped | ErrorKind::Authentication | ErrorKind::Permission)) => {
+            Err(kind)
+        }
+        other => Ok(other.ok()),
+    }
 }
 fn aggregate(rows: impl Iterator<Item = Verdict>) -> Verdict {
     let rows: Vec<_> = rows.collect();
@@ -207,6 +220,52 @@ impl fmt::Display for RunError {
 }
 impl std::error::Error for RunError {}
 
+/// A one-use, in-memory plan tied to the runner that prepared it. Only the
+/// planned Agent name and source identity are public; Task specs stay private.
+pub struct PreparedRun {
+    handle: RunHandle,
+    creates: Vec<Value>,
+}
+impl PreparedRun {
+    pub fn agent_name(&self) -> &str {
+        self.creates[0]["name"].as_str().unwrap()
+    }
+    pub fn snapshot(&self) -> &SnapshotId {
+        self.handle.snapshot()
+    }
+}
+fn check_stop(stop: &watch::Receiver<bool>) -> Result<(), ErrorKind> {
+    if *stop.borrow() {
+        Err(ErrorKind::Stopped)
+    } else {
+        Ok(())
+    }
+}
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    loop {
+        if *stop.borrow_and_update() {
+            return;
+        }
+        if stop.changed().await.is_err() {
+            // A caller dropping its sender is not an explicit Stop (legacy wrappers).
+            std::future::pending::<()>().await;
+        }
+    }
+}
+async fn stoppable<T>(
+    stop: &mut watch::Receiver<bool>,
+    work: impl std::future::Future<Output = Result<T, ErrorKind>>,
+) -> Result<T, ErrorKind> {
+    check_stop(stop)?;
+    tokio::select! {
+        // Preserve a ready acknowledgment, including a synchronous VM response
+        // that cannot yield mid-request. The next request still checks Stop.
+        biased;
+        result = work => result,
+        _ = stopped(stop) => Err(ErrorKind::Stopped),
+    }
+}
+
 pub struct NativeRunner<'a> {
     http: Box<dyn RunTransport + 'a>,
     id: Uuid,
@@ -223,17 +282,75 @@ impl<'a> NativeRunner<'a> {
             id: Uuid::new_v4(),
         }
     }
-    /// No POST retry, replacement, adoption or automatic deletion. Dropping this
-    /// future cannot stop remote work; a failed write retains its attempted name.
+    /// Map and validate every identical whole create body before the first POST.
+    /// No I/O occurs here; a caller can record the planned Agent before mutation.
+    pub fn prepare(&self, pair: ParsedPair) -> Result<PreparedRun, ErrorKind> {
+        let namespace = self.http.namespace();
+        let name = format!("bridge-run-{}", Uuid::new_v4().simple());
+        let spec = json!({"providerRef":{"name":self.http.provider()},"model":{"name":pair.model()},"systemPrompt":{"inline":pair.prompt()},"tools":pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
+        let mut creates = vec![json!({"name":name,"namespace":namespace,"spec":spec})];
+        for case in pair.cases() {
+            let task = format!("bridge-task-{}", Uuid::new_v4().simple());
+            let spec = json!({"type":"ai","agentRef":{"name":name},"prompt":case.input(),"timeout":"120s","retryPolicy":{"maxRetries":0}});
+            creates.push(json!({"name":task,"namespace":namespace,"spec":spec}));
+        }
+        if let Some(cap) = self.http.max_create_body_bytes() {
+            for body in &creates {
+                if serde_json::to_vec(body)
+                    .map_err(|_| ErrorKind::Source)?
+                    .len()
+                    > cap
+                {
+                    return Err(ErrorKind::Source);
+                }
+            }
+        }
+        Ok(PreparedRun {
+            handle: RunHandle {
+                pair,
+                target: self.id,
+                agent: None,
+                tasks: Vec::new(),
+            },
+            creates,
+        })
+    }
+    /// Legacy local caller: no new Stop UI. Failed preparation has no mutations.
     pub async fn submit(&self, pair: ParsedPair) -> Result<RunHandle, RunError> {
-        let mut handle = RunHandle {
-            pair,
-            target: self.id,
-            agent: None,
-            tasks: Vec::new(),
-        };
+        let prepared = self.prepare(pair.clone()).map_err(|kind| RunError {
+            kind,
+            handle: Box::new(RunHandle {
+                pair,
+                target: self.id,
+                agent: None,
+                tasks: Vec::new(),
+            }),
+            pending: None,
+        })?;
+        let (_sender, stop) = watch::channel(false);
+        self.submit_prepared(prepared, stop).await
+    }
+    pub async fn close(&self) {
+        self.http.close().await;
+    }
+    /// Stop bars new requests and drops asynchronous in-flight waits, not remote
+    /// Tasks. An uncertain write retains its attempted identity; never replay it.
+    pub async fn submit_prepared(
+        &self,
+        prepared: PreparedRun,
+        mut stop: watch::Receiver<bool>,
+    ) -> Result<RunHandle, RunError> {
+        let PreparedRun {
+            mut handle,
+            creates,
+        } = prepared;
         let mut pending = None;
-        let result = self.submit_inner(&mut handle, &mut pending).await;
+        let result = self
+            .submit_inner(&mut handle, &creates, &mut pending, &mut stop)
+            .await;
+        if result == Err(ErrorKind::Stopped) {
+            self.close().await;
+        }
         match result {
             Ok(()) => Ok(handle),
             Err(kind) => Err(RunError {
@@ -246,70 +363,81 @@ impl<'a> NativeRunner<'a> {
     async fn submit_inner(
         &self,
         handle: &mut RunHandle,
+        creates: &[Value],
         pending: &mut Option<PendingMutation>,
+        stop: &mut watch::Receiver<bool>,
     ) -> Result<(), ErrorKind> {
+        if handle.target != self.id {
+            return Err(ErrorKind::Configuration);
+        }
         let deadline = self.http.deadline();
-        let namespace = self.http.namespace();
-        let name = format!("bridge-run-{}", Uuid::new_v4().simple());
-        let spec = json!({"providerRef":{"name":self.http.provider()},"model":{"name":handle.pair.model()},"systemPrompt":{"inline":handle.pair.prompt()},"tools":handle.pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
-        *pending = Some(PendingMutation {
-            kind: "Agent",
-            name: name.clone(),
-        });
-        let value = self
-            .http
-            .request(
-                "agents",
-                None,
-                Some(&json!({"name":name,"namespace":namespace,"spec":spec})),
-                deadline,
-            )
+        for (index, body) in creates.iter().enumerate() {
+            check_stop(stop)?;
+            let (path, kind) = if index == 0 {
+                ("agents", "Agent")
+            } else {
+                ("tasks", "Task")
+            };
+            let name = body["name"].as_str().unwrap();
+            let request = self.http.request(path, None, Some(body), deadline);
+            let value = stoppable(stop, async {
+                // Do not label a request uncertain when Stop prevented its poll.
+                *pending = Some(PendingMutation {
+                    kind,
+                    name: name.into(),
+                });
+                request.await
+            })
             .await?;
-        handle.agent = Some(ResourceId::acknowledge(
-            &value, &spec, &name, namespace, "Agent",
-        )?);
-        *pending = None;
-        for case in handle.pair.cases() {
-            let task = format!("bridge-task-{}", Uuid::new_v4().simple());
-            let spec = json!({"type":"ai","agentRef":{"name":name},"prompt":case.input(),"timeout":"120s","retryPolicy":{"maxRetries":0}});
-            *pending = Some(PendingMutation {
-                kind: "Task",
-                name: task.clone(),
-            });
-            let value = self
-                .http
-                .request(
-                    "tasks",
-                    None,
-                    Some(&json!({"name":task,"namespace":namespace,"spec":spec})),
-                    deadline,
-                )
-                .await?;
-            handle.tasks.push(ResourceId::acknowledge(
-                &value, &spec, &task, namespace, "Task",
-            )?);
+            let resource =
+                ResourceId::acknowledge(&value, &body["spec"], name, self.http.namespace(), kind)?;
+            if index == 0 {
+                handle.agent = Some(resource);
+            } else {
+                handle.tasks.push(resource);
+            }
             *pending = None;
         }
-        Ok(())
+        // Also report Stop during the final synchronous response, with its receipt.
+        check_stop(stop)
     }
     /// GET-only, finite observation. Timeout/drop is not remote cancellation.
     /// Partial receipts can read already acknowledged tasks without replaying writes.
     pub async fn observe(&self, handle: &RunHandle) -> Result<RunReport, RunError> {
-        self.observe_inner(handle).await.map_err(|kind| RunError {
+        let (_sender, stop) = watch::channel(false);
+        self.observe_stoppable(handle, stop).await
+    }
+    pub async fn observe_stoppable(
+        &self,
+        handle: &RunHandle,
+        mut stop: watch::Receiver<bool>,
+    ) -> Result<RunReport, RunError> {
+        let result = self.observe_inner(handle, &mut stop).await;
+        if matches!(result, Err(ErrorKind::Stopped)) {
+            self.close().await;
+        }
+        result.map_err(|kind| RunError {
             kind,
             handle: Box::new(handle.clone()),
             pending: None,
         })
     }
-    async fn checked(&self, resource: &ResourceId, deadline: Instant) -> Result<Value, ErrorKind> {
-        let value = self
-            .http
-            .request(&resource.path(), None, None, deadline)
-            .await?;
+    async fn checked(
+        &self,
+        resource: &ResourceId,
+        deadline: Instant,
+        stop: &mut watch::Receiver<bool>,
+    ) -> Result<Value, ErrorKind> {
+        let path = resource.path();
+        let value = stoppable(stop, self.http.request(&path, None, None, deadline)).await?;
         resource.unchanged(&value)?;
         Ok(value)
     }
-    async fn observe_inner(&self, handle: &RunHandle) -> Result<RunReport, ErrorKind> {
+    async fn observe_inner(
+        &self,
+        handle: &RunHandle,
+        stop: &mut watch::Receiver<bool>,
+    ) -> Result<RunReport, ErrorKind> {
         if handle.target != self.id {
             return Err(ErrorKind::Configuration);
         }
@@ -319,25 +447,25 @@ impl<'a> NativeRunner<'a> {
         for (case, task) in handle.pair.cases().iter().zip(&handle.tasks) {
             let mut terminal_rounds = 0;
             loop {
-                self.checked(agent, deadline).await?;
-                let value = self.checked(task, deadline).await?;
+                self.checked(agent, deadline, stop).await?;
+                let value = self.checked(task, deadline, stop).await?;
                 let phase = value["status"]["phase"].as_str().unwrap_or("");
                 if matches!(phase, "Succeeded" | "Failed" | "Cancelled") {
                     terminal_rounds += 1;
-                    let result = self
-                        .http
-                        .request(&format!("{}/result", task.path()), None, None, deadline)
-                        .await
-                        .ok();
+                    let path = format!("{}/result", task.path());
+                    let result = optional_evidence(
+                        stoppable(stop, self.http.request(&path, None, None, deadline)).await,
+                    )?;
                     let answer = result
                         .as_ref()
                         .and_then(|v| v["result"].as_str())
                         .map(str::to_owned);
                     // Event recording is best effort. Any untrusted/unavailable drain
                     // loses tool proof, never turns missing evidence into a failure.
-                    let tools = self.tools(task, agent, deadline).await.unwrap_or_default();
-                    self.checked(task, deadline).await?;
-                    self.checked(agent, deadline).await?;
+                    let tools = optional_evidence(self.tools(task, agent, deadline, stop).await)?
+                        .unwrap_or_default();
+                    self.checked(task, deadline, stop).await?;
+                    self.checked(agent, deadline, stop).await?;
                     let assertions = case.evaluate(answer.as_deref(), &tools);
                     let verdict = if phase == "Succeeded" {
                         aggregate(assertions.iter().map(|r| r.verdict))
@@ -361,15 +489,16 @@ impl<'a> NativeRunner<'a> {
                 ) {
                     return Err(ErrorKind::Response);
                 }
-                self.http.pause(deadline).await?;
+                stoppable(stop, self.http.pause(deadline)).await?;
             }
         }
-        self.checked(agent, deadline).await?;
+        self.checked(agent, deadline, stop).await?;
         let verdict = if handle.tasks.len() == handle.pair.cases().len() {
             aggregate(cases.iter().map(|c| c.verdict))
         } else {
             Verdict::Unknown
         };
+        check_stop(stop)?;
         Ok(RunReport { cases, verdict })
     }
     async fn tools(
@@ -377,19 +506,14 @@ impl<'a> NativeRunner<'a> {
         task: &ResourceId,
         agent: &ResourceId,
         deadline: Instant,
+        stop: &mut watch::Receiver<bool>,
     ) -> Result<Vec<String>, ErrorKind> {
         let mut after = 0;
         let mut tools = Vec::new();
         for _ in 0..16 {
-            let value = self
-                .http
-                .request(
-                    &format!("{}/events", task.path()),
-                    Some(after),
-                    None,
-                    deadline,
-                )
-                .await?;
+            let path = format!("{}/events", task.path());
+            let value =
+                stoppable(stop, self.http.request(&path, Some(after), None, deadline)).await?;
             let page: EventPage = serde_json::from_value(value).map_err(|_| ErrorKind::Response)?;
             if page.namespace != task.namespace
                 || page.stream_type != "task"

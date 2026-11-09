@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { errors, runCall, type RunSnapshot } from './run-api';
-export default function Run({ onSnapshot }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void }) {
+import { sameSource, type SourceId } from './agent-api';
+export default function Run({ onSnapshot, blocked = false, stale = false, onStart, source }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot>();
   const [message, setMessage] = useState<string>();
   const [sending, setSending] = useState(false);
   const active = useRef(false);
+  const sourceCurrent = sameSource(source, snapshot?.source);
   useEffect(() => {
     active.current = true;
     const observe = async () => {
@@ -15,26 +17,28 @@ export default function Run({ onSnapshot }: { onSnapshot?: (snapshot: RunSnapsho
     void observe(); const timer = window.setInterval(() => { void observe(); }, 500);
     return () => { active.current = false; window.clearInterval(timer); };
   }, []);
-  useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot); }, [snapshot, message, onSnapshot]);
+  useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot ? { ...snapshot, sourceCurrent } : undefined); }, [snapshot, message, onSnapshot, sourceCurrent]);
   const start = async () => {
-    if (sending || !snapshot?.canRun) return;
+    if (sending || blocked || !snapshot?.canRun) return;
     setSending(true);
     const result = await runCall('setup_run_example');
     if (!active.current) return;
-    if (result.ok) { setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
+    if (result.ok) { onStart?.(); setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
     setSending(false);
   };
   const running = sending || snapshot?.state === 'running';
+  const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
   return <div className="example-run" aria-labelledby="run-title">
     <h3 id="run-title">Test on the local VM</h3>
-    <p className="muted">Run creates an Orka Agent and Task from these exact files. Connect the model in Clusters first.</p>
-    <button className="setup-button" disabled={running || !snapshot?.canRun} onClick={() => { void start(); }}>Run test</button>
+    <p className="muted">Run creates an Orka Agent and Task from these exact files.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</p>
+    <button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : running ? 'Check is running' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>
+    {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
     {running && <p role="status">Running on the local VM…</p>}
     {message && <p role="status">{message}</p>}
-    {snapshot?.error && <p role="alert">{errors[snapshot.error]}</p>}
+    {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
     {snapshot?.pending && <p>Possibly created {snapshot.pending.kind}: {snapshot.pending.name}</p>}
     {snapshot?.report && <>
-      <p role="status">Test verdict: {snapshot.report.verdict}</p>
+      <p role="status">{outdated ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>
       {snapshot.report.cases.map(c => <div key={c.id}>
         <h4>{c.id}</h4>
         <p>Task: {c.phase}</p>

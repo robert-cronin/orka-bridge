@@ -91,7 +91,7 @@ test('keyboard disclosure and radio selection are inert; only Continue starts on
   const next = screen.getByRole('button', { name: 'Continue' });
   next.focus(); await user.keyboard('{Enter}{Enter}');
   expect(await screen.findByText('Starting your workspace…')).toBeTruthy();
-  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Get your workspace ready' }));
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Getting your workspace ready' }));
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
 });
 

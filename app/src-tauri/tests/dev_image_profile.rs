@@ -23,13 +23,13 @@ fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
     #[cfg(not(debug_assertions))]
     for hash in [
         "a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27",
-        "aec2578beedf049f9824cbc1f8127621d977bcf1d35710d34f343b4f870c0cdd",
+        "df09d3e8d8d5d75499b273a71508579c3dcb2aed7fbf35927b5f10bc213ee762",
         "9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b",
-        "f766957de4970a0c0d8a3436892b9830f950665410599a7bf9852558e5cac09e",
+        "fc08e4ca4baaea87bf02659e0ee939370776a6c4ec57579c957d717b7d16de1c",
         "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
         "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
         "606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20",
-        "6bbbd88361bc958d7d431d3e4e9f7b4e0bf184f02f9f3da0b4ff1f5156ded331",
+        "dc78cfd200424bdc7e98e6eb60db990b86149036c9b495e228191b71e72ab9e0",
         "a1dead19c0d1dcef558008e556cd9bd4a8c5082daf4ecea6f531d03173748385",
     ] {
         let raw: Vec<u8> = (0..64)

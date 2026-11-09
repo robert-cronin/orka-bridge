@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::Path,
 };
 use tokio::sync::{mpsc, watch};
@@ -800,6 +800,39 @@ fn allocation(file: &File) -> Result<u64, ImageError> {
     }
     u64::try_from(info.AllocationSize).map_err(|_| ImageError::NoSpace)
 }
+fn resume_prefix(
+    context: &Context,
+    output: &mut File,
+    source: &mut File,
+    bytes: u64,
+) -> Result<(u64, Sha256), ImageError> {
+    let len = output.metadata().map_err(storage)?.len();
+    let mut count = 0;
+    let mut hashed = Sha256::new();
+    let mut retained = [0; 65536];
+    let mut original = [0; 65536];
+    if len <= bytes {
+        while count < len {
+            context.stop()?;
+            let n = (len - count).min(retained.len() as u64) as usize;
+            output.read_exact(&mut retained[..n]).map_err(storage)?;
+            source.read_exact(&mut original[..n]).map_err(storage)?;
+            if retained[..n] != original[..n] {
+                break;
+            }
+            hashed.update(&retained[..n]);
+            count += n as u64;
+        }
+        if count == len {
+            return Ok((count, hashed));
+        }
+    }
+    context.stop()?;
+    output.set_len(0).map_err(storage)?;
+    output.rewind().map_err(storage)?;
+    source.rewind().map_err(storage)?;
+    Ok((0, Sha256::new()))
+}
 fn copy(
     context: &Context,
     stage: &Dir,
@@ -821,10 +854,15 @@ fn copy(
     };
     if !reusable {
         let mut output = regular(stage, name, true, true)?;
-        output.set_len(0).map_err(storage)?;
-        context.space(bytes)?;
-        let mut count = 0u64;
-        let mut hashed = Sha256::new();
+        let (mut count, mut hashed) = resume_prefix(context, &mut output, &mut source, bytes)?;
+        context.space(bytes - count)?;
+        context
+            .events
+            .blocking_send(ImageProgress::Retained {
+                bytes: *done + count,
+                total,
+            })
+            .map_err(|_| ImageError::Cancelled)?;
         let mut buffer = [0; 65536];
         loop {
             context.stop()?;
@@ -853,6 +891,14 @@ fn copy(
         }
         output.sync_all().map_err(storage)?;
         drop(output);
+    } else {
+        context
+            .events
+            .blocking_send(ImageProgress::Retained {
+                bytes: *done + bytes,
+                total,
+            })
+            .map_err(|_| ImageError::Cancelled)?;
     }
     context.point(&format!("written-{name}"))?;
     let mut actual = regular(stage, name, true, false)?;
@@ -953,24 +999,32 @@ fn run(image: PreparedImage, context: Context) -> Result<InstalledImageSet, Imag
             (FILES[1], boot.kernel.bytes, boot.kernel.sha256.as_str()),
             (FILES[2], boot.initrd.bytes, boot.initrd.sha256.as_str()),
         ] {
-            let missing = match read_file(&stage, name) {
-                Ok(mut file) => match digest(&mut file, bytes, sha, || context.stop()) {
-                    Ok(()) => false,
-                    Err(ImageError::Integrity) => {
-                        drop(file);
-                        regular(&stage, name, true, false)?
-                            .set_len(0)
-                            .map_err(storage)?;
-                        true
+            context.stop()?;
+            let remaining = match read_file(&stage, name) {
+                Ok(mut file) => {
+                    let len = file.metadata().map_err(storage)?.len();
+                    if len < bytes {
+                        // Keep the prefix; copy compares it to the source before appending.
+                        bytes - len
+                    } else {
+                        match digest(&mut file, bytes, sha, || context.stop()) {
+                            Ok(()) => 0,
+                            Err(ImageError::Integrity) => {
+                                context.stop()?;
+                                drop(file);
+                                regular(&stage, name, true, false)?
+                                    .set_len(0)
+                                    .map_err(storage)?;
+                                bytes
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
-                    Err(e) => return Err(e),
-                },
-                Err(e) if missing(&e) => true,
+                }
+                Err(e) if missing(&e) => bytes,
                 Err(e) => return Err(e),
             };
-            if missing {
-                needed = needed.checked_add(bytes).ok_or(ImageError::NoSpace)?;
-            }
+            needed = needed.checked_add(remaining).ok_or(ImageError::NoSpace)?;
         }
         context.space(needed)?;
         let mut done = 0;

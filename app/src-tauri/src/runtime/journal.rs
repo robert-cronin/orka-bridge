@@ -38,6 +38,7 @@ pub struct InstallationRecord {
     pub phase: StatePhase,
     pub boot_nonce: Option<Uuid>,
 }
+pub(crate) struct JournalCustody(pub Option<Journal>);
 pub struct Journal {
     root: PathBuf,
     _lock: Arc<File>,

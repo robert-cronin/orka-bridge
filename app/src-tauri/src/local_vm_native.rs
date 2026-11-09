@@ -12,7 +12,7 @@ use crate::runtime::windows::inputs::{verify_windows_runtime, FilePin};
 ))]
 use crate::runtime::{
     image_install::{open_installed_image, InstalledImageSet},
-    journal::Journal,
+    journal::{Journal, JournalCustody},
 };
 #[cfg(any(all(debug_assertions, windows), test))]
 use std::io::Read;
@@ -46,6 +46,71 @@ async fn blocking_start(
         .map_err(|_| RuntimeError::Unavailable)?
 }
 
+#[cfg(any(
+    all(debug_assertions, windows),
+    all(debug_assertions, target_os = "macos", target_arch = "aarch64"),
+    test
+))]
+fn wait_for_infrastructure(
+    mut session: Box<dyn LocalSession>,
+    mut closed: watch::Receiver<bool>,
+    runtime: tokio::runtime::Handle,
+) -> Result<Box<dyn LocalSession>, RuntimeError> {
+    use bridge_runtime_protocol::{BootstrapPhase, InfrastructureService};
+    let result = (|| loop {
+        if *closed.borrow() {
+            return Err(RuntimeError::Closed);
+        }
+        let mut observed = None;
+        session.with_client(&mut |_, client| {
+            observed = Some(client.readiness()?);
+            Ok(())
+        })?;
+        // Never publish readiness after a close admitted during synchronous I/O.
+        if *closed.borrow() {
+            return Err(RuntimeError::Closed);
+        }
+        let state = observed.ok_or(RuntimeError::Unavailable)?;
+        match state.service {
+            InfrastructureService::Ready
+                if state.phase == Some(BootstrapPhase::InfrastructureReady) =>
+            {
+                return Ok(())
+            }
+            InfrastructureService::Starting => {}
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "Orka infrastructure failed (phase: {:?}, service: {:?})",
+                    state.phase, state.service
+                ))
+                .into())
+            }
+        }
+        // Time only schedules the next observation; it never grants readiness.
+        runtime.block_on(async {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => Ok(()),
+                _ = closed.changed() => Err(RuntimeError::Closed),
+            }
+        })?;
+    })();
+    match result {
+        Ok(()) => Ok(session),
+        Err(error) => {
+            if let Err(cleanup) = session.stop() {
+                // Keep the entire session, not just its error, until process exit.
+                std::mem::forget(session);
+                return Err(RuntimeError::StopUnconfirmed(format!(
+                    "Orka infrastructure startup failed: {}; stopping the VM failed: {}",
+                    failure_reason(&error),
+                    failure_reason(&cleanup)
+                )));
+            }
+            Err(error)
+        }
+    }
+}
+
 #[cfg(any(all(debug_assertions, windows), test))]
 fn retain_start_failure(
     root: &Path,
@@ -54,6 +119,7 @@ fn retain_start_failure(
     stderr: std::io::Result<Vec<u8>>,
 ) -> RuntimeError {
     use std::io::Write;
+    let unconfirmed = matches!(error, RuntimeError::StopUnconfirmed(_));
     let reason = failure_reason(&error);
     let (stderr, capture_error) = match stderr {
         Ok(bytes) => (bytes, None),
@@ -107,7 +173,11 @@ fn retain_start_failure(
         Ok(()) => message.push_str(&format!(". Details: {}", directory.display())),
         Err(error) => message.push_str(&format!(". Could not save diagnostics: {error}")),
     }
-    std::io::Error::other(message).into()
+    if unconfirmed {
+        RuntimeError::StopUnconfirmed(message)
+    } else {
+        std::io::Error::other(message).into()
+    }
 }
 
 /// Release has no approved image catalog; native development uses the existing
@@ -123,6 +193,7 @@ pub fn configured(resources: Option<PathBuf>, data: Option<PathBuf>) -> Arc<Loca
             return LocalVm::new(Arc::new(NativeFactory {
                 resources: resources.clone(),
                 root,
+                pending: Arc::new(Mutex::new(JournalCustody(None))),
             }));
         }
     }
@@ -213,6 +284,23 @@ fn reopen(
 struct NativeFactory {
     resources: PathBuf,
     root: PathBuf,
+    pending: Arc<Mutex<JournalCustody>>,
+}
+#[cfg(any(
+    test,
+    all(
+        debug_assertions,
+        any(windows, all(target_os = "macos", target_arch = "aarch64"))
+    )
+))]
+impl JournalCustody {
+    fn take_for_launch(&mut self, closed: &watch::Receiver<bool>) -> Result<Journal, RuntimeError> {
+        // Keep original creation authority through the very last cancellation checkpoint.
+        if *closed.borrow() {
+            return Err(RuntimeError::Closed);
+        }
+        self.0.take().ok_or(RuntimeError::Unavailable)
+    }
 }
 #[cfg(all(
     debug_assertions,
@@ -222,9 +310,13 @@ impl LocalFactory for NativeFactory {
     fn launch(
         &self,
         closed: watch::Receiver<bool>,
-        progress: Arc<dyn Fn(LocalVmStatus) + Send + Sync>,
+        progress: Arc<dyn Fn(LocalProgress) + Send + Sync>,
     ) -> StartFuture<'_> {
-        let (resources, root) = (self.resources.clone(), self.root.clone());
+        let (resources, root, pending) = (
+            self.resources.clone(),
+            self.root.clone(),
+            self.pending.clone(),
+        );
         Box::pin(blocking_start(move |runtime| {
             use crate::{
                 dev_image,
@@ -233,6 +325,8 @@ impl LocalFactory for NativeFactory {
             if *closed.borrow() {
                 return Err(RuntimeError::Closed);
             }
+            #[cfg(windows)]
+            runtime::windows::inputs::probe_startup_prerequisites()?;
             #[cfg(windows)]
             let inputs = {
                 runtime::windows::launch::control_path(
@@ -245,11 +339,38 @@ impl LocalFactory for NativeFactory {
                     path,
                 )?)
             };
-            let installed = match reopen(&root, dev_image::STATE_COMPATIBILITY_ID)? {
-                Some(existing) => existing,
+            use runtime::image_types::ImageProgress;
+            progress(LocalProgress::Image(ImageProgress::Verifying));
+            // This factory, not a reopened record, retains the original installation owner.
+            let mut custody = pending.lock().map_err(|_| RuntimeError::Unavailable)?;
+            let existing = if let Some(journal) = &custody.0 {
+                match open_installed_image(
+                    &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
+                ) {
+                    Ok(image) => Some(Arc::new(image)),
+                    Err(runtime::image_types::ImageError::RetainedImage) => None,
+                    Err(error) => return Err(error.into()),
+                }
+            } else {
+                match reopen(&root, dev_image::STATE_COMPATIBILITY_ID)? {
+                    Some((journal, image)) => {
+                        custody.0 = Some(journal);
+                        Some(image)
+                    }
+                    None => None,
+                }
+            };
+            let installed = match existing {
+                Some(image) => image,
                 None => {
-                    let image = dev_image::from_environment()
-                        .map_err(|_| RuntimeError::Unavailable)?
+                    let image = dev_image::from_environment_cancellable(&closed)
+                        .map_err(|_| {
+                            if *closed.borrow() {
+                                RuntimeError::Closed
+                            } else {
+                                RuntimeError::Unavailable
+                            }
+                        })?
                         .ok_or(RuntimeError::Unavailable)?;
                     let prepared = runtime.block_on(
                         runtime::setup_adapter::prepare_development_image(&image, closed.clone()),
@@ -257,49 +378,48 @@ impl LocalFactory for NativeFactory {
                     if *closed.borrow() {
                         return Err(RuntimeError::Closed);
                     }
-                    #[cfg(windows)]
-                    let (backend, identity) = (BackendKind::Qemu, b"pc-q35-11.0".to_vec());
-                    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                    let (backend, identity) = (
-                        BackendKind::Apple,
-                        runtime::apple_input::machine_identifier(&resources)?,
-                    );
-                    if *closed.borrow() {
-                        return Err(RuntimeError::Closed);
+                    if custody.0.is_none() {
+                        #[cfg(windows)]
+                        let (backend, identity) = (BackendKind::Qemu, b"pc-q35-11.0".to_vec());
+                        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                        let (backend, identity) = (
+                            BackendKind::Apple,
+                            runtime::apple_input::machine_identifier(&resources)?,
+                        );
+                        if *closed.borrow() {
+                            return Err(RuntimeError::Closed);
+                        }
+                        fs::create_dir_all(root.parent().ok_or(RuntimeError::Unavailable)?)?;
+                        custody.0 = Some(Journal::create(&root, backend, identity)?);
                     }
-                    fs::create_dir_all(root.parent().ok_or(RuntimeError::Unavailable)?)?;
-                    let journal = Journal::create(&root, backend, identity)?;
-                    progress(LocalVmStatus::Installing);
+                    progress(LocalProgress::Status(LocalVmStatus::Installing));
+                    let journal = custody.0.as_ref().ok_or(RuntimeError::Unavailable)?;
                     let image = runtime.block_on(prepared.materialize(
                         &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
                         closed.clone(),
-                        |_| {},
+                        |event| progress(LocalProgress::Image(event)),
                     ))?;
-                    (journal, Arc::new(image))
+                    Arc::new(image)
                 }
             };
-            if *closed.borrow() {
-                return Err(RuntimeError::Closed);
-            }
-            progress(LocalVmStatus::Starting);
+            progress(LocalProgress::Status(LocalVmStatus::Starting));
             let utc = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| RuntimeError::Unavailable)?
                 .as_secs();
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let installation = installed.1.installation_id();
+            let installation = installed.installation_id();
+            let journal = custody.take_for_launch(&closed)?;
+            drop(custody); // A stopped worker returns the original owner through this slot.
             #[cfg(windows)]
-            let native = start_windows_session(inputs, installed.0, installed.1, &root, utc)?;
+            let native = start_windows_session(inputs, journal, installed, &root, utc, pending)?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let session = runtime::apple_session::AppleVmSession::launch(
-                resources,
-                installed.0,
-                installed.1,
-                utc,
+            let session = runtime::apple_session::AppleVmSession::launch_retaining(
+                resources, journal, installed, utc, pending,
             )?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             let native = NativeSession(session, installation);
-            Ok(Box::new(native) as Box<dyn LocalSession>)
+            wait_for_infrastructure(Box::new(native), closed, runtime)
         }))
     }
 }
@@ -310,6 +430,7 @@ fn start_windows_session(
     image: Arc<InstalledImageSet>,
     root: &Path,
     utc: u64,
+    custody: Arc<Mutex<JournalCustody>>,
 ) -> Result<NativeSession, RuntimeError> {
     // Keep the verified private root non-replaceable even if failed startup or
     // shutdown releases its worker before diagnostics are written.
@@ -317,8 +438,13 @@ fn start_windows_session(
     let installation = image.installation_id();
     let backend = crate::runtime::windows::backend::WindowsBackend::new(inputs);
     let failure = backend.failure_diagnostics();
-    let result = crate::runtime::RuntimeWorker::new(Box::new(backend), journal, image)
-        .and_then(|worker| crate::runtime::windows::session::WindowsSession::start(worker, utc));
+    let result =
+        crate::runtime::RuntimeWorker::new(Box::new(backend), journal, image).and_then(|worker| {
+            crate::runtime::windows::session::WindowsSession::start(
+                worker.retain_journal(custody),
+                utc,
+            )
+        });
     match result {
         Ok(session) => Ok(NativeSession {
             session,

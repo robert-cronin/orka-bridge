@@ -382,50 +382,79 @@ impl Runner for Kmx {
         collect(child, Duration::from_secs(60))
     }
 }
-// Caller supplies a newly-owned, unreaped child in its own process group.
+pub(crate) struct Collected {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub elapsed_ms: u64,
+    pub exit_code: Option<i32>,
+    pub error: Option<io::Error>,
+}
+// Preserve the ordinary engine contract; only model diagnostics consume partial bytes.
 pub(crate) fn collect(
-    mut child: std::process::Child,
+    child: std::process::Child,
     timeout: std::time::Duration,
 ) -> io::Result<EngineResult> {
-    use std::{io::Read, thread, time::Instant};
-    let (tx, rx) = std::sync::mpsc::channel();
-    for (tag, mut pipe) in [
-        (
-            false,
-            Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
-        ),
-        (
-            true,
-            Box::new(child.stderr.take().unwrap()) as Box<dyn Read + Send>,
-        ),
-    ] {
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let mut b = Vec::new();
-            let r = pipe
-                .by_ref()
-                .take((MAX_FILE + 1) as u64)
-                .read_to_end(&mut b);
-            let _ = tx.send((tag, r.map(|_| b)));
+    let out = collect_diagnostic(child, timeout);
+    if let Some(error) = out.error {
+        return Err(if error.kind() == io::ErrorKind::FileTooLarge {
+            invalid()
+        } else {
+            error
         });
     }
-    drop(tx);
-    let deadline = Instant::now() + timeout;
-    let mut out = None;
-    let mut diagnostics = None;
-    let result = (|| {
-        loop {
-            while let Ok((stderr, bytes)) = rx.try_recv() {
-                let b = bytes?;
-                if b.len() > MAX_FILE {
-                    return Err(invalid());
-                }
-                if stderr {
-                    diagnostics = Some(!b.is_empty())
-                } else {
-                    out = Some(b)
-                }
+    Ok(EngineResult {
+        exit: out.exit_code.unwrap_or(-1),
+        stdout: out.stdout,
+        has_diagnostics: !out.stderr.is_empty(),
+    })
+}
+// Nonblocking reads retain partial output without waiting for pipe EOF on timeout.
+fn drain(pipe: &mut impl io::Read, bytes: &mut Vec<u8>) -> io::Result<bool> {
+    let mut buffer = [0; 8192];
+    loop {
+        let remaining = (MAX_FILE + 1).saturating_sub(bytes.len()).min(buffer.len());
+        if remaining == 0 {
+            return Err(io::ErrorKind::FileTooLarge.into());
+        }
+        match pipe.read(&mut buffer[..remaining]) {
+            Ok(0) => return Ok(true),
+            Ok(n) => bytes.extend_from_slice(&buffer[..n]),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
+// Caller supplies a newly-owned, unreaped child in its own process group.
+pub(crate) fn collect_diagnostic(
+    mut child: std::process::Child,
+    timeout: std::time::Duration,
+) -> Collected {
+    use std::{os::fd::AsRawFd, thread, time::Instant};
+    let start = Instant::now();
+    let mut out = Collected {
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        elapsed_ms: 0,
+        exit_code: None,
+        error: None,
+    };
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let mut nonblocking = false;
+    out.error = (|| {
+        for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+            // SAFETY: both descriptors are live owned pipes; flags do not change ownership.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
+                return Err(io::Error::last_os_error());
             }
+        }
+        nonblocking = true;
+        loop {
+            let stdout_done = drain(&mut stdout, &mut out.stdout)?;
+            let stderr_done = drain(&mut stderr, &mut out.stderr)?;
             let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
             // SAFETY: child is ours and never reaped until group cleanup; status is writable.
             if unsafe {
@@ -439,32 +468,37 @@ pub(crate) fn collect(
             {
                 return Err(io::Error::last_os_error());
             }
-            if unsafe { status.si_pid() } != 0 {
-                if let Some(has_diagnostics) = diagnostics {
-                    if let Some(stdout) = out.take() {
-                        return Ok(EngineResult {
-                            exit: 0,
-                            stdout,
-                            has_diagnostics,
-                        });
-                    }
-                }
+            if unsafe { status.si_pid() } != 0 && stdout_done && stderr_done {
+                return Ok(());
             }
-            if Instant::now() >= deadline {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            if start.elapsed() >= timeout {
+                return Err(io::ErrorKind::TimedOut.into());
             }
             thread::sleep(std::time::Duration::from_millis(5));
         }
-    })();
+    })()
+    .err();
     // The owned group is still unreaped: its ID cannot be recycled before this kill.
     unsafe {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }
-    let status = child.wait()?;
-    result.map(|mut r| {
-        r.exit = status.code().unwrap_or(-1);
-        r
-    })
+    match child.wait() {
+        Ok(status) => out.exit_code = status.code(),
+        Err(e) => out.error = Some(e),
+    }
+    if nonblocking {
+        // Drain bytes already in the pipes after kill/reap; never wait for escaped writers.
+        for result in [
+            drain(&mut stdout, &mut out.stdout),
+            drain(&mut stderr, &mut out.stderr),
+        ] {
+            if out.error.is_none() {
+                out.error = result.err();
+            }
+        }
+    }
+    out.elapsed_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    out
 }
 
 #[cfg(test)]

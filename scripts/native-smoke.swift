@@ -129,12 +129,22 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         }
         if ["local-selected", "choice-retained"].contains(name) {
             require(selected && !welcome && !choice, "Native preference was not acknowledged or retained")
-            require(text.contains("Model connection locked"), "The model gate is not visible")
+            let modelRow = observations.first {
+                let label = $0.topCandidates(1).first?.string ?? ""
+                return label.contains("Choose the") && label.contains("your agent uses")
+            }
+            require(modelRow != nil && observations.contains {
+                $0.topCandidates(1).first?.string == "Waiting" &&
+                    abs($0.boundingBox.midY - modelRow!.boundingBox.midY) < 0.02
+            }, "The AI setup step is not waiting")
+            require(!observations.contains {
+                ["Connect model", "Use GitHub sign-in", "Connect a model"].contains($0.topCandidates(1).first?.string ?? "")
+            }, "Model connection is exposed before workspace readiness")
         }
         print("PASS \(name): native workspace screen observed")
         return observations
     }
-    let pages = ["Overview", "Designer", "Clusters"]
+    let pages = ["Overview", "Designer", "Clusters", "web-reader"]
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
         guard top > 0.10 && top < 0.25,
@@ -143,10 +153,11 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         return text
     })
     // Negative control: persistent nav labels must not qualify as page headings.
-    for wrong in pages where wrong != page {
+    for wrong in pages where wrong != page && !(page == "Designer" && wrong == "web-reader") {
         require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
-    require(headings == Set([page]), "Native screenshot does not show the expected \(page) page heading; observed \(headings)")
+    let expectedHeading = page == "Designer" ? "web-reader" : page
+    require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
 }
@@ -161,6 +172,47 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
     initial = try capture("chooser", "Clusters")
 }
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
+    // The owned form works before any workspace exists. Exercise its real writer,
+    // not injected renderer data; the later setup preview must remain read-only.
+    // Welcome focuses the choice heading. Search, Clusters, then Designer are
+    // the three preceding keyboard stops; don't depend on OCR splitting tab copy.
+    key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
+    let form = try capture("agent-form", "Designer")
+    guard let label = form.first(where: {
+        let text = $0.topCandidates(1).first?.string ?? ""
+        return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
+    }) else {
+        fatalError("Instructions field is not visible")
+    }
+    let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
+    let before = try String(contentsOf: owned, encoding: .utf8)
+    let rect = window()!.1
+    let fieldPoint = CGPoint(x: rect.midX,
+        y: rect.minY + (1 - label.boundingBox.midY) * rect.height + 70)
+    mouse(.leftMouseDown, fieldPoint); mouse(.leftMouseUp, fieldPoint)
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
+        event.flags = .maskCommand; event.post(tap: .cghidEventTap)
+    }
+    let suffix = " Native form probe \(UUID().uuidString)."
+    for character in suffix.utf16 {
+        var unit = character
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+            event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            event.post(tap: .cghidEventTap)
+        }
+    }
+    var saved = false
+    for _ in 0..<20 {
+        if (try String(contentsOf: owned, encoding: .utf8)) == before + suffix { saved = true; break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(saved, "Native form did not preserve the file and append the exact instructions suffix")
+    let savedForm = try capture("agent-form-saved", "Designer")
+    require(savedForm.contains { $0.topCandidates(1).first?.string == "Saved" }, "Form save was not acknowledged")
+    clickTab("Clusters", savedForm)
+    initial = try capture("chooser-after-form", "Clusters")
     // Selecting the default radio does not start anything; Continue is explicit.
     clickText("Continue", in: initial)
 }
@@ -191,6 +243,55 @@ key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
+// Setup previews must remain read-only, including native keyboard editing attempts.
+let clusters = try capture("before-file", "Clusters")
+clickTab("Designer", clusters)
+let agent = try capture("agent-view", "Designer")
+guard let fileButton = agent.first(where: { $0.topCandidates(1).first?.string == "File" }) else {
+    fatalError("File view switch is not visible")
+}
+let fileRect = window()!.1
+let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRect.width,
+                        y: fileRect.minY + (1 - fileButton.boundingBox.midY) * fileRect.height)
+mouse(.leftMouseDown, filePoint); mouse(.leftMouseUp, filePoint)
+Thread.sleep(forTimeInterval: 0.5)
+let fileView = try capture("file-view", "Designer")
+require(fileView.contains { $0.topCandidates(1).first?.string == "Read-only during setup" },
+        "Native setup preview is not labelled read-only")
+let ownedFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
+let existedBeforeEdit = FileManager.default.fileExists(atPath: ownedFile.path)
+let bytesBeforeEdit = existedBeforeEdit ? try Data(contentsOf: ownedFile) : nil
+// A pointer-activated button need not receive focus in the native webview.
+// Establish editor focus, then verify keyboard exit/re-entry before typing.
+let editorPoint = CGPoint(x: fileRect.midX, y: fileRect.minY + fileRect.height * 0.6)
+mouse(.leftMouseDown, editorPoint); mouse(.leftMouseUp, editorPoint)
+key(48, shift: true); key(48)
+// Unlike the owned-editor append probe, a read-only edit attempt needs no
+// end-of-file navigation: Command-Down can scroll the page heading out of view.
+let marker = "\n\nNative read-only edit probe \(UUID().uuidString)."
+// Return is an editing command, not part of a multi-character Unicode event.
+for character in marker.utf16 {
+    if character == 10 { key(36); continue }
+    var unit = character
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+        event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+        event.post(tap: .cghidEventTap)
+    }
+}
+Thread.sleep(forTimeInterval: 1)
+try capture("file-edited", "Designer")
+let existsAfterEdit = FileManager.default.fileExists(atPath: ownedFile.path)
+require(existsAfterEdit == existedBeforeEdit, "Setup preview changed owned-file existence")
+if let bytesBeforeEdit {
+    require(try Data(contentsOf: ownedFile) == bytesBeforeEdit,
+            "Setup preview persisted a native keyboard edit")
+}
+let readOnlyFile = try capture("file-read-only", "Designer")
+require(readOnlyFile.contains { $0.topCandidates(1).first?.string == "Read-only during setup" },
+        "Native setup preview lost its read-only state after the edit attempt")
+print("PASS read-only preview: keyboard edit attempted; owned file unchanged or still absent")
+clickTab("Clusters", readOnlyFile)
 // Resize this CI-owned window using its native bottom-right handle.
 let rect = window()!.1
 // The display may constrain the initial size. Derive the minimum frame from

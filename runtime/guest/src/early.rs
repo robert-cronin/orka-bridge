@@ -45,6 +45,7 @@ pub trait BootSystem {
     fn bind_persistent(&mut self) -> io::Result<()>;
     fn credentials(&mut self) -> io::Result<()>;
     fn ready(&mut self, b: &BootDescriptor) -> io::Result<()>;
+    fn infrastructure(&mut self, b: &BootDescriptor) -> io::Result<InfrastructureState>;
     fn save_boot(&mut self, b: &BootDescriptor) -> io::Result<()>;
     fn shutdown(&mut self) -> io::Result<()>;
 }

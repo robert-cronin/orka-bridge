@@ -140,6 +140,7 @@ pub struct WireRequest {
 pub enum ResultBody {
     ModelState(ModelState),
     CredentialState(CredentialState),
+    Infrastructure(InfrastructureState),
     Ready {},
     Snapshot {
         snapshot: SnapshotId,
@@ -154,6 +155,29 @@ pub enum ResultBody {
     Error {
         code: ErrorCode,
     },
+}
+/// Post-boot observation only; Boot and Shutdown retain their plain Ready reply.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InfrastructureState {
+    pub phase: Option<BootstrapPhase>,
+    pub service: InfrastructureService,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BootstrapPhase {
+    IdentityPrepared,
+    ClusterReady,
+    CacheVerified,
+    OrkaReady,
+    InfrastructureReady,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InfrastructureService {
+    Starting,
+    Ready,
+    Failed,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

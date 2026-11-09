@@ -50,17 +50,24 @@ test('navigation starts at the page heading after scrolling another page', async
   expect(main.scrollTop).toBe(0);
 });
 
-test('honest_empty_states', async () => {
-  const user = userEvent.setup();
-  render(<App />);
-  for (const name of ['Overview', 'Designer']) {
-    await user.click(screen.getByRole('button', { name }));
-    const main = screen.getByRole('main', { name });
-    expect(within(main).getByText('Nothing is connected yet.')).toBeTruthy();
-    expect(within(main).getAllByRole('heading', { level: 2 })).toHaveLength(name === 'Clusters' ? 2 : 1);
-    expect(within(main).queryByRole('button', { name: 'New agent' })?.hasAttribute('disabled')).toBe(name === 'Designer' ? true : undefined);
-    expect(within(main).queryByRole('link')).toBeNull();
-  }
+test('Overview stays empty until an agent catalog exists', async () => {
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  expect(within(screen.getByRole('main', { name: 'Overview' })).getByText('Nothing is connected yet.')).toBeTruthy();
+});
+
+test('Designer opens the owned agent without workspace setup and shares its saved state', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
+    : command === 'agent_open' ? { agent: '---\nname: web-reader\ndescription: Reads a page.\n---\nRead.', tests: 'Checks' }
+    : command === 'setup_run_status' ? { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null }
+    : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
+  expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  expect(screen.getByRole('main', { name: 'web-reader' })).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Saved')).toBeTruthy();
 });
 
 test.each([
@@ -69,7 +76,7 @@ test.each([
   ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
   ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 4'],
   ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
-  ['failed', 'localVm', 'Workspace could not start', 'Setup paused'],
+  ['failed', 'localVm', "The workspace couldn't start.", 'Setup paused'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
   ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {
@@ -114,11 +121,12 @@ test('model acknowledgment and observed check counts survive navigation', async 
     { id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' },
     { id: 'b', phase: 'Succeeded', answer: 'no', completedTools: [], assertions: [{ id: 'b1', kind: 'contains', verdict: 'failed' }], verdict: 'failed' },
   ] }, acknowledged: [], pending: null, error: null };
+  let modelConnected = false;
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
-    if (command === 'setup_connect_model') return { ready: true };
-    if (command === 'setup_example') return pair;
-    if (command === 'setup_run_status') return snapshot;
+    if (command === 'setup_connect_model') { modelConnected = true; return { ready: true }; }
+    if (command === 'agent_open') return pair;
+    if (command === 'setup_run_status') return { ...snapshot, modelConnected };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
@@ -129,6 +137,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(screen.getByText('This computer').textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 checks passing')).toBeTruthy();
+  expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
   expect(within(screen.getByRole('navigation')).getByText('page-reader, 1 check failing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
@@ -141,7 +150,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
   const report = { verdict: 'passed', cases: [{ id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] };
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
-    if (command === 'setup_example') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_open') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
     if (command === 'setup_run_status') return { state: complete ? 'complete' : 'running', canRun: complete, report: complete ? report : null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
@@ -174,7 +183,7 @@ test('the idle refresh does not erase a delayed selection failure', async () => 
 test('an unavailable example is not reported as still opening', async () => {
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
-    if (command === 'setup_example') return Promise.reject(new Error('file unavailable'));
+    if (command === 'agent_open') return Promise.reject(new Error('file unavailable'));
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
@@ -187,7 +196,7 @@ test('an unavailable example is not reported as still opening', async () => {
 test.each(['unknown', 'unavailable'])('background check status preserves %s outcomes', async state => {
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
-    if (command === 'setup_example') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_open') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
     if (command === 'setup_run_status') return state === 'unavailable' ? Promise.reject(new Error('IPC failed'))
       : { state: 'unknown', canRun: false, report: null, acknowledged: [], pending: { kind: 'Task', name: 'maybe-created' }, error: 'observe' };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
@@ -203,11 +212,21 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
   expect(within(screen.getByRole('contentinfo')).getByRole('status').textContent).toContain(expected);
 });
 
+test('a retained native report for older source is stale in the shared chrome', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
+    : command === 'agent_open' ? { agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks', source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } }
+    : { state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(await within(screen.getByRole('contentinfo')).findByText('Checks not run since your change')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 checks passing')).toBeNull();
+});
 test('Open example retries a failed read without discarding successful runs', async () => {
   let fail = true;
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
-    if (command === 'setup_example') return fail ? Promise.reject(new Error('read failed')) : { agent: '---\nname: recovered-reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_open') return fail ? Promise.reject(new Error('read failed')) : { agent: '---\nname: recovered-reader\n---\nRead.', tests: 'Check' };
     if (command === 'setup_run_status') return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
@@ -217,7 +236,7 @@ test('Open example retries a failed read without discarding successful runs', as
   await within(screen.getByRole('navigation')).findByText('Example unavailable');
   await user.click(screen.getByRole('button', { name: 'Clusters' })); fail = false;
   await user.click(screen.getByRole('button', { name: 'Open example' }));
-  expect(await within(screen.getByRole('navigation')).findByText('recovered-reader, read-only')).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText('recovered-reader, ready to edit')).toBeTruthy();
 });
 
 test('a transient setup read failure recovers while off Clusters', async () => {

@@ -259,6 +259,53 @@ async fn partial_writes_retain_owned_work_without_restoring_creation_authority()
     );
 }
 #[tokio::test]
+async fn cancelled_prefix_is_compared_and_resume_does_not_recopy_it() {
+    for corrupt in [false, true] {
+        let data = vec![42; 196608];
+        let scene = Scene::with_disk(&data);
+        let mut target = scene.target();
+        target.point = Some(Arc::new(|p| {
+            if p == "copy-chunk" {
+                Err(ImageError::Cancelled)
+            } else {
+                Ok(())
+            }
+        }));
+        let (_sender, closed) = watch::channel(false);
+        assert_eq!(
+            materialize_image(&scene.image, &target, closed.clone(), |_| {})
+                .await
+                .err(),
+            Some(ImageError::Cancelled)
+        );
+        let path = scene.path().join("image/.pending-1/os.disk");
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 65536);
+        if corrupt {
+            std::fs::write(&path, vec![99; 65536]).unwrap();
+        }
+        let chunks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = chunks.clone();
+        target.point = Some(Arc::new(move |p| {
+            if p == "copy-chunk" {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(())
+        }));
+        let installed = materialize_image(&scene.image, &target, closed, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(scene.path().join(installed.disk_path())).unwrap(),
+            data
+        );
+        // Two disk chunks remain for a valid prefix, plus one each for boot files.
+        assert_eq!(
+            chunks.load(std::sync::atomic::Ordering::SeqCst),
+            if corrupt { 5 } else { 4 }
+        );
+    }
+}
+#[tokio::test]
 async fn immutable_boot_corruption_and_same_bytes_replacement_are_rejected() {
     for name in ["os.kernel", "os.initrd"] {
         let scene = Scene::new();

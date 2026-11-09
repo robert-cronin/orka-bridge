@@ -319,8 +319,139 @@ pub struct Prerequisites {
     pub hypervisor: Observation,
     pub usability: Usability,
 }
+#[cfg(any(all(debug_assertions, windows), test))]
+fn startup_prerequisites(
+    hypervisor: Observation,
+    firmware: Observation,
+    feature: Observation,
+) -> Result<(), super::super::types::RuntimeError> {
+    use Observation::*;
+    let label = match (hypervisor, firmware, feature) {
+        (Yes, _, _) => return Ok(()), // Firmware bit may be hidden by a running hypervisor.
+        (No, No, _) => "virtualizationDisabled",
+        (No, Yes, _) | (Unknown, Yes, No) => "hypervisorUnavailable",
+        _ => return Ok(()), // Unknown observations defer to the backend's real launch result.
+    };
+    Err(std::io::Error::other(label).into())
+}
+#[cfg(any(test, all(debug_assertions, windows)))]
+type GetCapability = unsafe extern "system" fn(u32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
+#[cfg(any(test, all(debug_assertions, windows)))]
+fn observe_hypervisor(get: GetCapability) -> Observation {
+    // WHvGetCapability requires room for a 64-bit capability, even though
+    // HypervisorPresent (code 0) is a 32-bit Win32 BOOL at the start of it.
+    let (mut present, mut written) = (0u64, 0u32);
+    let result = unsafe { get(0, (&mut present as *mut u64).cast(), 8, &mut written) };
+    if result >= 0 && (4..=8).contains(&written) {
+        if present as u32 != 0 {
+            Observation::Yes
+        } else {
+            Observation::No
+        }
+    } else {
+        Observation::Unknown
+    }
+}
+/// Observe WHP itself; feature flags alone do not prove a running hypervisor.
+#[cfg(all(debug_assertions, windows))]
+pub(crate) fn probe_startup_prerequisites() -> Result<(), super::super::types::RuntimeError> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::{
+        Foundation::{FreeLibrary, GetLastError},
+        System::Threading::{IsProcessorFeaturePresent, PF_VIRT_FIRMWARE_ENABLED},
+    };
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
+        fn GetProcAddress(
+            module: *mut c_void,
+            name: *const u8,
+        ) -> Option<unsafe extern "system" fn() -> isize>;
+    }
+    let name: Vec<_> = "WinHvPlatform.dll".encode_utf16().chain(Some(0)).collect();
+    // LOAD_LIBRARY_SEARCH_SYSTEM32 prevents loading a renderer/workspace DLL.
+    let module = unsafe { LoadLibraryExW(name.as_ptr(), std::ptr::null_mut(), 0x800) };
+    let (hypervisor, feature) = if module.is_null() {
+        (
+            Observation::Unknown,
+            if unsafe { GetLastError() } == 126 {
+                Observation::No
+            } else {
+                Observation::Unknown
+            },
+        )
+    } else {
+        let address = unsafe { GetProcAddress(module, c"WHvGetCapability".as_ptr().cast()) };
+        let observed = match address {
+            None => (Observation::Unknown, Observation::No),
+            Some(address) => {
+                let get: GetCapability = unsafe { std::mem::transmute(address) };
+                (observe_hypervisor(get), Observation::Yes)
+            }
+        };
+        unsafe {
+            FreeLibrary(module);
+        }
+        observed
+    };
+    let firmware = if unsafe { IsProcessorFeaturePresent(PF_VIRT_FIRMWARE_ENABLED) } != 0 {
+        Observation::Yes
+    } else {
+        Observation::No
+    };
+    startup_prerequisites(hypervisor, firmware, feature)
+}
 impl Prerequisites {
     pub fn usable(&self) -> bool {
         self.usability == Usability::Usable && self.reboot_pending != Observation::Yes
+    }
+}
+#[cfg(test)]
+mod prerequisite_tests {
+    use super::*;
+    #[test]
+    fn capability_query_uses_the_documented_64_bit_output_buffer() {
+        unsafe extern "system" fn capability(
+            code: u32,
+            output: *mut std::ffi::c_void,
+            bytes: u32,
+            written: *mut u32,
+        ) -> i32 {
+            if code != 0 || bytes != 8 {
+                return 0x8007007au32 as i32;
+            }
+            unsafe {
+                *output.cast::<u32>() = 1;
+                *written = 4;
+            }
+            0
+        }
+        assert_eq!(observe_hypervisor(capability), Observation::Yes);
+    }
+    #[test]
+    fn startup_diagnosis_never_calls_running_hypervisor_firmware_disabled() {
+        use Observation::*;
+        for (hypervisor, firmware, feature, expected) in [
+            (Yes, No, Yes, None),
+            (Yes, Unknown, Yes, None),
+            (No, No, Yes, Some("virtualizationDisabled")),
+            (No, Yes, Yes, Some("hypervisorUnavailable")),
+            (Unknown, Yes, No, Some("hypervisorUnavailable")),
+            (Unknown, No, No, None),
+            (Unknown, Yes, Yes, None),
+            (No, Unknown, Yes, None),
+        ] {
+            let actual = startup_prerequisites(hypervisor, firmware, feature)
+                .err()
+                .map(|error| match error {
+                    super::super::super::types::RuntimeError::Io(error) => error.to_string(),
+                    other => panic!("expected fixed diagnostic, got {other:?}"),
+                });
+            assert_eq!(
+                actual.as_deref(),
+                expected,
+                "{hypervisor:?} / {firmware:?} / {feature:?}"
+            );
+        }
     }
 }

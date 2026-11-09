@@ -36,6 +36,7 @@ fn unavailable() -> SetupError {
     SetupError {
         kind: "modelUnavailable",
         message: "The stored model connection is unavailable or its completion is unknown.",
+        diagnostic: None,
         native: None,
     }
 }
@@ -122,6 +123,20 @@ fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
         unknown: b.is_some_and(|b| matches!(b.phase, Phase::Storing | Phase::Pending)),
         connection: b.and_then(|b| b.connection.clone()),
     }
+}
+fn finish_connect(
+    root: &Path,
+    b: &mut Binding,
+    remote: ModelState,
+) -> Result<ModelSetupState, SetupError> {
+    b.connection = remote.connection;
+    if remote.phase != ModelPhase::Ready {
+        write_binding(root, b).map_err(|_| SetupError::connect(remote.diagnostic.clone()))?;
+        return Err(SetupError::connect(remote.diagnostic));
+    }
+    b.phase = Phase::Connected;
+    write_binding(root, b)?;
+    Ok(state(Some(b), true))
 }
 impl SetupStore {
     fn recover_empty_reservation(
@@ -248,10 +263,69 @@ impl SetupStore {
         }
         let _owner = model_owner(root)?;
         let mut b = read_binding(root)?.ok_or_else(unavailable)?;
-        if b.installation != installation
-            || matches!(b.phase, Phase::Storing | Phase::Pending | Phase::Cleared)
-        {
+        if b.installation != installation || matches!(b.phase, Phase::Storing | Phase::Cleared) {
             return Err(unavailable());
+        }
+        if b.phase == Phase::Pending {
+            // Only explicit intent on the original lease can reconcile an uncertain attempt.
+            if b.nonce != Some(client.boot_nonce()) {
+                return Err(unavailable());
+            }
+            let remote = client
+                .model_status()
+                .map_err(|_| SetupError::model("modelConnect"))?;
+            if remote.connection.as_ref().is_some_and(|c| {
+                c.selection != selection || b.connection.as_ref().is_some_and(|known| known != c)
+            }) {
+                return Err(unavailable());
+            }
+            if remote.phase == ModelPhase::Ready {
+                b.connection = remote.connection;
+                b.phase = Phase::Connected;
+                write_binding(root, &b)?;
+                return Ok(state(Some(&b), true));
+            }
+            if let Some(connection) = remote.connection {
+                // Persist the acknowledged identity before cleanup, never guess one.
+                b.connection = Some(connection.clone());
+                write_binding(root, &b)?;
+                let stopped = client
+                    .disconnect_model(&connection)
+                    .map_err(|_| SetupError::model("modelConnect"))?;
+                if stopped.phase != ModelPhase::Idle {
+                    return Err(SetupError::connect(stopped.diagnostic));
+                }
+                client
+                    .clear_credential_file(connection.generation)
+                    .map_err(|_| SetupError::model("modelDelivery"))?;
+            } else if let Some(known) = &b.connection {
+                // Cleanup may have completed before the host's Stored write failed.
+                // Same-lease Idle plus a cleared, advanced generation proves completion.
+                if remote.phase != ModelPhase::Idle
+                    || remote.credential.installed
+                    || !remote
+                        .credential
+                        .generation
+                        .is_some_and(|g| g != known.generation)
+                    || known.selection != selection
+                {
+                    return Err(unavailable());
+                }
+            } else if remote.credential.installed {
+                let generation = remote.credential.generation.ok_or_else(unavailable)?;
+                // Guest admits the original attempt only; kmx's retained record refuses
+                // partial creates. Do not recapture, load or republish credentials.
+                let remote = client
+                    .connect_model(generation, selection)
+                    .map_err(|_| SetupError::model("modelConnect"))?;
+                return finish_connect(root, &mut b, remote);
+            } else if remote.phase != ModelPhase::Idle {
+                return Err(unavailable());
+            }
+            b.phase = Phase::Stored;
+            b.nonce = None;
+            b.connection = None;
+            write_binding(root, &b)?;
         }
         if b.phase == Phase::Connected {
             // Health-only on the same lease: no capture, store load or delivery.
@@ -292,14 +366,7 @@ impl SetupStore {
         let remote = client
             .connect_model(generation, selection)
             .map_err(|_| SetupError::model("modelConnect"))?;
-        b.connection = remote.connection;
-        if remote.phase != ModelPhase::Ready {
-            write_binding(root, &b)?;
-            return Err(SetupError::model("modelConnect"));
-        }
-        b.phase = Phase::Connected;
-        write_binding(root, &b)?;
-        Ok(state(Some(&b), true))
+        finish_connect(root, &mut b, remote)
     }
     /// Explicit sign-out; unavailable/unknown VM cleanup never deletes the host slot.
     pub fn sign_out_model(
@@ -499,6 +566,7 @@ mod tests {
             boot_nonce: nonce,
             request_id: 3,
             body: ResultBody::ModelState(ModelState {
+                diagnostic: None,
                 phase: ModelPhase::Idle,
                 connection: None,
                 credential: CredentialState {
@@ -593,6 +661,7 @@ mod tests {
                     (0 | 1, RequestBody::ModelStatus {}) => {
                         seen.lock().unwrap().push("probe");
                         ResultBody::ModelState(ModelState {
+                            diagnostic: None,
                             phase: ModelPhase::Idle,
                             connection: None,
                             credential,
@@ -619,6 +688,7 @@ mod tests {
                         assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
                         seen.lock().unwrap().push("connect");
                         ResultBody::ModelState(ModelState {
+                            diagnostic: None,
                             phase: ModelPhase::Ready,
                             connection: Some(expected.clone()),
                             credential,
@@ -627,6 +697,7 @@ mod tests {
                     (5, RequestBody::ModelStatus {}) => {
                         seen.lock().unwrap().push("health");
                         ResultBody::ModelState(ModelState {
+                            diagnostic: None,
                             phase: ModelPhase::Ready,
                             connection: Some(expected.clone()),
                             credential,
@@ -748,6 +819,7 @@ mod tests {
                     (0, RequestBody::ModelStatus {}) => {
                         seen.lock().unwrap().push("status");
                         ResultBody::ModelState(ModelState {
+                            diagnostic: None,
                             phase: ModelPhase::Idle,
                             connection: None,
                             credential: credential(false),
@@ -773,12 +845,14 @@ mod tests {
                         assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
                         seen.lock().unwrap().push("connect");
                         ResultBody::ModelState(ModelState {
+                            diagnostic: None,
                             phase: ModelPhase::Ready,
                             connection: Some(expected.clone()),
                             credential: credential(true),
                         })
                     }
                     (4, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                        diagnostic: None,
                         phase: ModelPhase::Ready,
                         connection: Some(expected.clone()),
                         credential: credential(true),
@@ -787,6 +861,7 @@ mod tests {
                         assert_eq!(*id, expected.id);
                         seen.lock().unwrap().push("disconnect");
                         ResultBody::ModelState(ModelState {
+                            diagnostic: None,
                             phase: ModelPhase::Idle,
                             connection: None,
                             credential: credential(true),

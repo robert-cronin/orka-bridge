@@ -29,6 +29,22 @@ impl AppleVmSession {
     ) -> Result<Self, RuntimeError> {
         let worker =
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?;
+        Self::start(worker, host_utc)
+    }
+    #[cfg(all(debug_assertions, target_arch = "aarch64"))]
+    pub(crate) fn launch_retaining(
+        resource_root: PathBuf,
+        journal: Journal,
+        image: Arc<InstalledImageSet>,
+        host_utc: u64,
+        custody: Arc<std::sync::Mutex<super::journal::JournalCustody>>,
+    ) -> Result<Self, RuntimeError> {
+        let worker =
+            RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?
+                .retain_journal(custody);
+        Self::start(worker, host_utc)
+    }
+    fn start(worker: RuntimeWorker, host_utc: u64) -> Result<Self, RuntimeError> {
         let mut session = Self {
             worker,
             transport: None,
@@ -68,8 +84,8 @@ impl AppleVmSession {
             Ok(())
         })();
         if let Err(error) = result {
-            session.stop()?; // Failed observed cleanup keeps the worker quarantined.
-            return Err(error);
+            session.transport = None;
+            return Err(session.worker.startup_failed(error));
         }
         Ok(session)
     }

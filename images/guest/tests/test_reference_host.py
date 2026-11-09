@@ -63,6 +63,7 @@ class ExchangeTests(unittest.TestCase):
         request = json.loads(io.readline())
         self.assertEqual("readiness", request["body"]["body"]["op"])
         result["body"]["requestId"] = 3
+        result["body"]["body"] = {"op": "infrastructure", "body": {"phase": "cluster-ready", "service": "starting"}}
         io.write(json.dumps(result).encode() + b"\n")
         self.assertTrue(entered.wait(1))
         self.assertEqual([], select.select([guest], [], [], 0.1)[0])
@@ -70,8 +71,50 @@ class ExchangeTests(unittest.TestCase):
         request = json.loads(io.readline())
         self.assertEqual("shutdown", request["body"]["body"]["op"])
         result["body"]["requestId"] = 4
+        result["body"]["body"] = {"op": "ready", "body": {}}
         io.write(json.dumps(result).encode() + b"\n")
         thread.join(2)
         self.assertFalse(thread.is_alive())
         self.assertEqual([], errors)
         self.assertEqual(6, len(received))
+
+    def readiness_exchange(self, reply, shutdown=False):
+        api = importlib.import_module("guest.reference_host")
+        boot = {"installationId": str(uuid.uuid4()), "generation": 1, "bootNonce": str(uuid.uuid4()), "stateCreation": "new", "stateFsUuid": "id", "stateBytes": 1, "hostUtc": 1}
+        host, guest = socket.socketpair()
+        for side in (host, guest):
+            side.settimeout(2)
+            self.addCleanup(side.close)
+        outcome = []
+        def exchange():
+            try:
+                outcome.append(api.runtime_exchange(host, boot, before_shutdown=lambda: None))
+            except (ValueError, OSError, KeyError, TypeError) as error:
+                outcome.append(error)
+        thread = threading.Thread(target=exchange, daemon=True)
+        thread.start()
+        io = guest.makefile("rwb", buffering=0)
+        def answer(id_, body):
+            io.readline()
+            io.write(json.dumps({"type": "result", "body": {"version": 1, "bootNonce": boot["bootNonce"], "requestId": id_, "body": body}}).encode() + b"\n")
+        for stage, id_ in (("early", 1), ("serve", 2)):
+            io.write(json.dumps({"type": "hello", "body": {"version": 1, "stage": stage, "guestNonce": str(uuid.uuid4()), "acceptedBootNonce": None if stage == "early" else boot["bootNonce"]}}).encode() + b"\n")
+            answer(id_, {"op": "ready", "body": {}})
+        answer(3, reply)
+        if shutdown:
+            answer(4, {"op": "ready", "body": {}})
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        return outcome[0]
+
+    def test_failed_or_masked_infrastructure_observation_is_recorded_not_gated(self):
+        for phase, service in ((None, "failed"), ("orka-ready", "failed"), ("infrastructure-ready", "ready")):
+            frames = self.readiness_exchange({"op": "infrastructure", "body": {"phase": phase, "service": service}}, shutdown=True)
+            self.assertEqual(6, len(frames))
+            self.assertEqual({"phase": phase, "service": service}, frames[4]["body"]["body"]["body"])
+
+    def test_readiness_rejects_plain_ready_and_invalid_observations(self):
+        for reply in ({"op": "ready", "body": {}}, {"op": "infrastructure", "body": {"phase": "bogus", "service": "ready"}},
+                      {"op": "infrastructure", "body": {"phase": None, "service": "bogus"}}, {"op": "infrastructure", "body": {"service": "ready"}},
+                      {"op": "infrastructure", "body": {"phase": None, "service": "ready", "extra": 1}}):
+            self.assertIsInstance(self.readiness_exchange(reply), ValueError)

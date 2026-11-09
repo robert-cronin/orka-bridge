@@ -48,6 +48,11 @@ fn release_context_embeds_fonts_and_all_license_notices() {
         "licenses/Tauri-API-MIT.txt",
         "licenses/Geist-OFL.txt",
         "licenses/Geist-Mono-OFL.txt",
+        "licenses/git2-MIT.txt",
+        "licenses/libgit2-COPYING.txt",
+        "licenses/libz-sys-MIT.txt",
+        "licenses/zlib-LICENSE.txt",
+        "licenses/sha1-MIT.txt",
     ] {
         assert!(!assets
             .get(&name.into())
@@ -59,5 +64,36 @@ fn release_context_embeds_fonts_and_all_license_notices() {
         assert!(names
             .iter()
             .any(|name| name.contains(font) && name.ends_with(".woff2")));
+    }
+}
+
+#[test]
+fn agent_commands_are_granted_only_to_local_main_window() {
+    use tauri::ipc::Origin;
+    let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    let authority = context.runtime_authority_mut();
+    for command in [
+        "agent_open",
+        "agent_save",
+        "setup_cancel_local",
+        "setup_change_local",
+        "setup_open_help",
+    ] {
+        assert!(authority
+            .resolve_access(command, "main", "main", &Origin::Local)
+            .is_some());
+        assert!(authority
+            .resolve_access(command, "other", "other", &Origin::Local)
+            .is_none());
+        assert!(authority
+            .resolve_access(
+                command,
+                "main",
+                "main",
+                &Origin::Remote {
+                    url: "https://example.com".parse().unwrap()
+                }
+            )
+            .is_none());
     }
 }

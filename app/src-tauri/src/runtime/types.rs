@@ -10,6 +10,8 @@ pub enum RuntimeError {
     RetainedState,
     Unavailable,
     Closed,
+    /// A native writer may still be alive; never admit another startup.
+    StopUnconfirmed(String),
     Protocol(ProtocolError),
     Image(ImageError),
 }
@@ -27,9 +29,23 @@ impl std::error::Error for RuntimeError {
         }
     }
 }
+#[derive(Debug)]
+pub(crate) struct UnconfirmedStop(pub String);
+impl std::fmt::Display for UnconfirmedStop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for UnconfirmedStop {}
 impl From<std::io::Error> for RuntimeError {
     fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
+        if e.get_ref()
+            .is_some_and(|inner| inner.is::<UnconfirmedStop>())
+        {
+            Self::StopUnconfirmed(e.to_string())
+        } else {
+            Self::Io(e)
+        }
     }
 }
 impl From<ProtocolError> for RuntimeError {

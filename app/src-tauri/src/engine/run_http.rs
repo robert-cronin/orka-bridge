@@ -88,6 +88,14 @@ pub trait RunTransport: Send + Sync {
     fn namespace(&self) -> &str;
     fn provider(&self) -> &str;
     fn limits(&self) -> RunLimits;
+    /// Transport-specific whole-create-body limit, not a source-format limit.
+    fn max_create_body_bytes(&self) -> Option<usize> {
+        None
+    }
+    /// Release owned connection tasks. Local transports need no asynchronous cleanup.
+    fn close(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
     fn request<'a>(
         &'a self,
         path: &'a str,
@@ -183,8 +191,13 @@ impl Http {
                     .body(serde_json::to_vec(body).map_err(|_| ErrorKind::Source)?);
             }
             let mut response = request.send().await.map_err(|_| ErrorKind::Transport)?;
-            if response.status().as_u16() != if body.is_some() { 201 } else { 200 } {
-                return Err(ErrorKind::Response);
+            match response.status().as_u16() {
+                401 => return Err(ErrorKind::Authentication),
+                403 => return Err(ErrorKind::Permission),
+                status if status != if body.is_some() { 201 } else { 200 } => {
+                    return Err(ErrorKind::Response)
+                }
+                _ => {}
             }
             const CAP: usize = 1024 * 1024;
             if response.content_length().is_some_and(|n| n > CAP as u64) {

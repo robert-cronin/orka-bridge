@@ -24,8 +24,19 @@ struct System {
     identity: Option<Identity>,
     creds: bool,
     fail_tmpfs: bool,
+    infrastructure_failed: bool,
 }
 impl BootSystem for System {
+    fn infrastructure(&mut self, _: &BootDescriptor) -> io::Result<InfrastructureState> {
+        Ok(InfrastructureState {
+            phase: Some(BootstrapPhase::ClusterReady),
+            service: if self.infrastructure_failed {
+                InfrastructureService::Failed
+            } else {
+                InfrastructureService::Starting
+            },
+        })
+    }
     fn probe(&mut self) -> io::Result<Disk> {
         self.events.push("probe");
         self.disk.clone().ok_or(io::Error::other("missing"))
@@ -230,6 +241,22 @@ fn wrong_nonce_stage_duplicate_and_guest_results_refused() {
     assert!(s.accept(request(b, 1)).is_err());
 }
 #[test]
+fn storage_readiness_alone_does_not_acknowledge_infrastructure() {
+    let b = descriptor(StateCreation::Existing);
+    let mut system = existing();
+    system.creds = true;
+    system.ready(&b).unwrap();
+    let request = WireRequest {
+        version: VERSION,
+        boot_nonce: b.boot_nonce,
+        request_id: 3,
+        body: RequestBody::Readiness {},
+    };
+    let (reply, stop) = bridge_guest::service::handle(&mut system, &b, &request);
+    assert_ne!(reply, ResultBody::Ready {}, "storage is not Orka readiness");
+    assert!(!stop);
+}
+#[test]
 fn readiness_shutdown_and_no_execution_operations() {
     let b = descriptor(StateCreation::Existing);
     let mut s = existing();
@@ -241,7 +268,23 @@ fn readiness_shutdown_and_no_execution_operations() {
         body: RequestBody::Readiness {},
     };
     let (reply, stop) = bridge_guest::service::handle(&mut s, &b, &r);
-    assert!(matches!(reply, ResultBody::Ready {}));
+    assert_eq!(
+        reply,
+        ResultBody::Infrastructure(InfrastructureState {
+            phase: Some(BootstrapPhase::ClusterReady),
+            service: InfrastructureService::Starting,
+        })
+    );
+    assert!(!stop);
+    s.infrastructure_failed = true;
+    let (reply, stop) = bridge_guest::service::handle(&mut s, &b, &r);
+    assert!(matches!(
+        reply,
+        ResultBody::Infrastructure(InfrastructureState {
+            service: InfrastructureService::Failed,
+            ..
+        })
+    ));
     assert!(!stop);
     s.events.clear();
     r.body = RequestBody::Engine(EngineActionWire::Version {});

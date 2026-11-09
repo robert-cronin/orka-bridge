@@ -142,8 +142,15 @@ impl VmClient {
             }
         }
     }
-    pub fn readiness(&mut self) -> io::Result<()> {
-        self.ready_call(RequestBody::Readiness {})
+    pub fn readiness(&mut self) -> io::Result<InfrastructureState> {
+        match self.call(RequestBody::Readiness {})? {
+            ResultBody::Infrastructure(state) => Ok(state),
+            ResultBody::Error { .. } => Err(io::Error::other("guest readiness refused")),
+            _ => {
+                self.channel = None;
+                Err(invalid())
+            }
+        }
     }
     // Lifecycle shutdown is routed by the native Windows session; other
     // platform session adapters are not connected in this slice.
