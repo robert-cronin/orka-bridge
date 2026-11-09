@@ -214,7 +214,7 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
         let text = $0.topCandidates(1).first?.string ?? ""
         return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
     }) else {
-        fatalError("Instructions field is not visible")
+        fail("Instructions field is not visible")
     }
     let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
     let before = try String(contentsOf: owned, encoding: .utf8)
@@ -279,7 +279,7 @@ let clusters = try capture("before-file", "Clusters")
 clickTab("Designer", clusters)
 let agent = try capture("agent-view", "Designer")
 guard let fileButton = agent.first(where: { $0.topCandidates(1).first?.string == "File" }) else {
-    fatalError("File view switch is not visible")
+    fail("File view switch is not visible")
 }
 let fileRect = window()!.1
 let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRect.width,
