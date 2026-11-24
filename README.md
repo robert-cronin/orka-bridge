@@ -78,12 +78,13 @@ The proposed namespace and access model for team clusters is described in
   own Orka API or Kubernetes integration.
 - **Local VM:** The Bridge app itself is small. On first run it downloads a VM image, published as a GitHub release
   asset, containing a container runtime, [kind](https://kind.sigs.k8s.io/), a preconfigured Orka cluster, and kmx.
-  No separate installation is required. The planned runtimes are Apple's Virtualization framework on Apple silicon,
-  WSL2 on Windows, and QEMU/KVM on Linux. The image and build pipeline are not implemented yet. For scale: Orka's
-  own images plus the kind node image are about 800 MB compressed, before the VM's operating system.
+  No separate installation is required. Bridge runs the VM with Apple's Virtualization framework on Apple silicon
+  and with its bundled QEMU on Windows x64, using Windows Hypervisor Platform (not WSL). Images are built and
+  published as reviewed, hash-pinned release assets; see [the preview guide](docs/preview.md) for sizes. Linux isn't
+  supported yet.
 - **Models:** Bridge uses your existing GitHub Copilot sign-in through a model gateway inside the VM. This route has
   been verified on a kind cluster: a native Orka agent fetched a real web page through Copilot with no API key and no
-  model download. You can also provide an API key for OpenAI, Anthropic, or Azure OpenAI.
+  model download. You can also use your own API key for OpenAI or Anthropic instead.
 
 Two projects influenced the approach: [Hermes Agent](https://github.com/NousResearch/hermes-agent), for getting from
 installation to a working agent without a terminal, and [Try Omarchy](https://github.com/omacom/try-omarchy), for

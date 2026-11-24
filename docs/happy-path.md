@@ -117,8 +117,8 @@ Also later:
   [#9](https://github.com/orka-agents/orka-bridge/issues/9).
 - **Using Bridge from the GitHub Copilot app,** picking Bridge's workspace as an environment there. See
   [the plan and what exists today](copilot-app.md).
-- **API keys** for OpenAI, Anthropic or Azure OpenAI as an alternative to Copilot.
-- **Updating the VM** when a new image ships, keeping your agents and tests.
+- **More model providers,** such as Azure OpenAI or an OpenAI-compatible endpoint; OpenAI and Anthropic API keys
+  are already an alternative to Copilot.
 - **The second hour:** running an agent on a schedule ([#1](https://github.com/orka-agents/orka-bridge/issues/1)),
   and reaching it from Teams or Telegram ([#3](https://github.com/orka-agents/orka-bridge/issues/3)). Teams needs a
   bot registration in your organization that Bridge can't do for you.
