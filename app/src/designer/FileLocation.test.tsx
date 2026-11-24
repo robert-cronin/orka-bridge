@@ -11,7 +11,9 @@ test('copies the complete native path and reveals by document identity, never a 
   mockIPC((command, args) => { calls.push([command, args]); return null; });
   const path = '/home/creator/Orka/agents/a-long-agent/a-long-agent.agent.md';
   render(<FileLocation path={path} documentId={SAMPLE_DOCUMENT_ID} />);
-  expect(screen.getByText(path)).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'CODE' && node.textContent === path)).toBeTruthy();
+  // The folder may wrap; the file name is one unbreakable piece, so it never splits at a hyphen.
+  expect(document.querySelector('.agent-path-name')?.textContent).toBe('a-long-agent.agent.md');
   const copyButton = screen.getByRole('button', { name: 'Copy file path' });
   expect(copyButton.getAttribute('title')).toBe('Copy file path');
   expect(copyButton.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
