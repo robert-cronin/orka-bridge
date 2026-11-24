@@ -131,7 +131,7 @@ test('catalog unavailable preserves model while soul remains editable without ca
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByText('More settings'));
   expect((screen.getByRole('textbox', { name: 'Personality' }) as HTMLTextAreaElement).readOnly).toBe(false);
-  expect(screen.getByText(path)).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'CODE' && node.textContent === path)).toBeTruthy();
   fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'A new description' } });
   await screen.findByRole('heading', { name: 'reader' });
   await waitFor(() => expect(screen.getByText('A new description', { selector: 'p' })).toBeTruthy());
@@ -167,7 +167,7 @@ test('setup opens the owned document for editing but keeps discovery and Run gat
   expect(screen.getByRole('combobox', { name: 'It thinks with' }).matches(':disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByText('More settings'));
-  expect(screen.getByText(path)).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'CODE' && node.textContent === path)).toBeTruthy();
   fireEvent.change(instructions, { target: { value: 'Edited during setup.' } }); fireEvent.blur(instructions);
   await waitFor(() => expect(writes).toEqual([agent.replace('Read a page.\n', 'Edited during setup.')]));
 });

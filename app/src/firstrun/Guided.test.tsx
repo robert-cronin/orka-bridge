@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import { noUpgrade } from '../setup/test-upgrade';
-import { guidedStep } from './guided';
+import { guidedStep, withoutStepCount } from './guided';
 
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -92,4 +92,14 @@ test('the status card stays during guidance and at narrow widths keeps its text 
   const compact = shellCss.slice(shellCss.indexOf('@media (max-width: 820px)'));
   expect(compact).not.toMatch(/\.status-lines[^{]*\{[^}]*display:\s*none/);
   expect(compact).not.toMatch(/clip-path/);
+});
+
+test('a guided setup line keeps its words and drops its own step count', () => {
+  expect(withoutStepCount('Setting up, step 2 of 4')).toBe('Setting up');
+  expect(withoutStepCount('Getting your workspace ready, step 2 of 4')).toBe('Getting your workspace ready');
+  expect(withoutStepCount('Workspace ready')).toBe('Workspace ready');
+});
+
+test('the guided layout hides the choice card step count that the header replaces', () => {
+  expect(readFileSync('src/firstrun/firstrun.css', 'utf8')).toMatch(/\.app-shell\.guided \.workspace-choice-step \{ display: none; \}/);
 });
