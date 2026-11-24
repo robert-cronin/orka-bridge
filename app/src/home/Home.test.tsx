@@ -107,7 +107,7 @@ test('adding Bridge’s assistant selects it even after another agent was chosen
   expect(screen.getByText('Ask Bridge below. Answers come from your workspace on this computer.').getAttribute('role')).toBe('status');
 });
 
-test('while the assistant is being set up, its action is disabled and the wait is announced', async () => {
+test('while the assistant is being set up, the wait is announced and nothing else is offered', async () => {
   render(<Home active revision={0} assistantBusy onOpenAgent={() => {}} onChooseWorkspace={() => {}} onAddAssistant={() => {}} />);
   expect((await screen.findByText('Setting up Bridge’s assistant…')).getAttribute('role')).toBe('status');
   expect(screen.queryByRole('button', { name: 'Add Bridge’s assistant' })).toBeNull();

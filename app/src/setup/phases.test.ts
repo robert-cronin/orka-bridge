@@ -34,3 +34,15 @@ test('each stage keeps its own time, and Start never inherits a file phase clock
   expect(formatElapsed(5_000)).toBe('5 s');
   expect(formatElapsed(125_000)).toBe('2 min 5 s');
 });
+
+test('pausing or failing, then starting again, times each stage afresh', () => {
+  vi.useFakeTimers(); vi.setSystemTime(100_000);
+  type P = { current: 'check' | 'install' | undefined };
+  const { result, rerender } = renderHook(({ current }: P) => usePhaseTimes(current, undefined), { initialProps: { current: 'install' } as P });
+  act(() => { vi.advanceTimersByTime(30_000); });
+  rerender({ current: undefined });
+  act(() => { vi.advanceTimersByTime(60_000); });
+  rerender({ current: 'check' });
+  expect(result.current('install')).toBeUndefined();
+  expect(result.current('check')).toBe(0);
+});

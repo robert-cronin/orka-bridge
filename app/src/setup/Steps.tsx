@@ -48,7 +48,8 @@ function stepRows({ status, stopping, updating, updateBlocked, error, modelState
   const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'stale', stale: 'stale' }[firstCheck] as Status,
     { running: 'Running', passed: 'Its test passed', failed: 'Its test failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
     : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
-  const chat: [Status, string] = status.localVm === 'ready' && connected ? ['passed', 'Ready'] : ['not-started', 'Waiting'];
+  // The chat itself is the person's next action, not something setup has finished.
+  const chat: [Status, string] = status.localVm === 'ready' && connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
   const names = ['Where agents run', 'Get your workspace ready', 'Connect the AI', chatFirst ? 'Chat with Bridge' : 'Run your first agent'];
   // After an unreadable poll the snapshot is last known, not observed: keep the words but nothing runs or is current.
   const rows = [ ['passed', 'On this computer'] as [Status, string], workspace, model, chatFirst ? chat : test].map(([state, result], i) => ({ name: names[i], state: error ? 'not-started' as Status : state, result: error ? `Last known: ${result}` : result }));

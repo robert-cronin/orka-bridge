@@ -62,8 +62,8 @@ export default function Preflight({ requiredMemoryBytes, recommendedDiskBytes, o
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
       </section>}
       {lowDisk !== undefined && <section aria-label="Free disk space">
-        <p className="preflight-result" role="status"><StatusIcon state="needs-you" /><span>{`This computer has ${formatRequirementGB(lowDisk)} of free disk space; Bridge recommends about ${formatRequirementGB(recommendedDiskBytes)}. Setup stops before it runs out of space, so free some space first if you can.`}</span></p>
-        <Button type="button" kind="secondary" onClick={() => { setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>
+        <p className="preflight-result" role="status"><StatusIcon state="needs-you" /><span>{`This computer has ${formatRequirementGB(lowDisk)} of free disk space; Bridge recommends about ${formatRequirementGB(recommendedDiskBytes)}. Bridge checks that the download and install fit before writing them; free some space first if you can.`}</span></p>
+        <Button type="button" kind="secondary" onClick={() => { reason.current?.focus(); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>
       </section>}
     </div>
     <p className={!status || !checking && !uncertain && attempt === 0 ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{status}</p>

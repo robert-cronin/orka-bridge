@@ -67,3 +67,11 @@ test('unreadable status suppresses progress and current step without dropping ro
   expect(screen.getAllByRole('listitem')).toHaveLength(4);
   expect(document.querySelector('[aria-current="step"]')).toBeNull();
 });
+
+test('on the one-click path the last row is the chat, waiting on the person once the AI connects', () => {
+  render(<SetupProgress {...actions} status={status('ready')} modelState="connected" chatFirst onChat={() => {}} />);
+  const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem');
+  expect(rows[3].querySelector('b')?.textContent).toBe('Chat with Bridge');
+  expect(rows[3].textContent).toContain('Needs you');
+  expect(screen.getByRole('button', { name: 'Chat with Bridge' })).toBeTruthy();
+});

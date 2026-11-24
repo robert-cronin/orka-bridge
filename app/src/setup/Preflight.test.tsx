@@ -242,3 +242,14 @@ test('a direct native preflight failure is decoded and explained without raw dia
   expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });
+
+test('low free disk is advice with Check again that keeps keyboard focus in the check', async () => {
+  const { ipc } = await native({ ...ready, disk: 'low', availableDiskBytes: 20000000000 });
+  const user = userEvent.setup();
+  const advice = await screen.findByText(/This computer has 20.0 GB of free disk space; Bridge recommends about 64.4 GB/);
+  expect(advice.textContent).toContain('checks that the download and install fit before writing them');
+  expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(document.activeElement?.id).toBe('preflight-reason');
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'setup_preflight').length).toBeGreaterThan(1));
+});

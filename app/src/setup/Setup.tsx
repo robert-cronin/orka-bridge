@@ -267,8 +267,10 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onChat, onStatu
   const [chatFirst, setChatFirst] = useState(chatFirstChosen);
   // One click: start this computer's workspace now. Native still runs its computer checks and
   // reports a failure on the local page. If an update check is pending, the page offers Continue.
+  // Kept in memory too, so a denied storage write can't switch this session back to the example's first test.
+  const chatFirstArmed = useRef(false);
   function startChatFirst() {
-    start(); armChatFirst(); setChatFirst(true);
+    start(); armChatFirst(); chatFirstArmed.current = true; setChatFirst(true);
     setLocation('local'); setPanel('local');
     void chooseLocal();
   }
@@ -300,7 +302,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onChat, onStatu
     // Observation must not invalidate an explicit selection awaiting its reply.
     const firstStart = action === 'start' && status.selected !== 'localVm';
     // One-click setup leads to a chat with Bridge, so it doesn't queue the example's automatic test.
-    if (firstStart && !chatFirstPending()) armFirstTest();
+    if (firstStart && !chatFirstPending() && !chatFirstArmed.current) armFirstTest();
     clearTimeout(timer.current);
     ++epoch.current;
     mutation.current = true;

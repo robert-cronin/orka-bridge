@@ -113,3 +113,32 @@ test('after chat-first setup, a relaunch opens the returning workspace, not the 
   expect(await screen.findByRole('region', { name: 'Workspace' })).toBeTruthy();
   expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull();
 });
+
+test('chat-first never pulls someone off the page they moved to; the assistant is still made ready', async () => {
+  localStorage.setItem('bridge.welcomeSeen.v1', '1'); localStorage.setItem(chatFirstPreference, 'pending');
+  const { ipc } = native({ selected: 'localVm', localVm: 'ready', model: 'available' });
+  // Hold the assistant's creation open until the person has moved on.
+  const original = ipc.getMockImplementation()!;
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  // mockIPC awaits replies, so a held promise is a valid reply even though the helper's type is synchronous.
+  ipc.mockImplementation(((command: string, args?: unknown) => command === 'agent_create' ? held.then(() => original(command, args)) : original(command, args)) as unknown as typeof original);
+  const user = userEvent.setup(); render(<App />);
+  await connect(user);
+  await waitFor(() => expect(created(ipc)).toHaveLength(1));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  release();
+  await waitFor(() => expect(localStorage.getItem(chatFirstPreference)).toBe('done'));
+  expect(screen.queryByRole('heading', { name: 'What can Bridge do for you?' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-current')).toBe('page');
+});
+
+test('a denied storage write keeps one-click setup from arming the example’s first test', async () => {
+  const writes: [string, string][] = [];
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => { writes.push([key, value]); throw new DOMException('Denied', 'SecurityError'); });
+  native({ selected: null, localVm: 'idle', model: 'locked' });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Set up Bridge' }));
+  await screen.findByText('Starting the workspace…');
+  expect(writes.some(([key]) => key === firstTestPreference)).toBe(false);
+  expect(screen.getByRole('heading', { name: 'Meet Bridge' })).toBeTruthy();
+});

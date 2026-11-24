@@ -37,6 +37,9 @@ export function usePhaseTimes(current: SetupPhase | undefined, progress: Workspa
   const [now, setNow] = useState(() => Date.now());
   if (current !== previous.current) {
     const at = Date.now();
+    const order = (phase?: SetupPhase) => setupPhases.findIndex(p => p.id === phase);
+    // Paused, failed or sent back to an earlier stage: the next attempt times itself afresh.
+    if (!current || previous.current && order(current) < order(previous.current)) times.current.clear();
     if (previous.current) { const last = times.current.get(previous.current); if (last && last.end === undefined) last.end = at; }
     if (current && !times.current.has(current)) {
       const own = progress && (current === 'start' ? progress.phase === 'starting' : progress.phase !== 'starting' && times.current.size === 0);
@@ -52,6 +55,7 @@ export function usePhaseTimes(current: SetupPhase | undefined, progress: Workspa
   }, [current]);
   return (phase: SetupPhase) => {
     const time = times.current.get(phase);
-    return time ? (time.end ?? now) - time.start : undefined;
+    // The running stage reads the clock itself; the interval only re-renders, and stops while paused.
+    return time ? (time.end ?? Math.max(now, Date.now())) - time.start : undefined;
   };
 }

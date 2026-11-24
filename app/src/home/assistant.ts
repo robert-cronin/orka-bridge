@@ -54,9 +54,9 @@ async function create(): Promise<string> {
   const id = existing?.id ?? await createDocument(assistantName, catalog?.defaultModel ?? undefined);
   const seed = await agentCall('agent_open', undefined, id);
   // Only a bare seed is filled: a new file, or one an earlier attempt created but couldn't fill.
-  // A file with instructions or tools is someone's agent, even if they changed it, and is left alone.
+  // A file with instructions, tools or a description is someone's agent, and is left alone.
   const form = readForm(seed.agent);
-  if (form.instructions.trim() || form.tools.length) return id;
+  if (form.instructions.trim() || form.tools.length || form.description?.trim()) return id;
   const offered = catalog?.tools.state === 'ready'
     ? new Set(catalog.tools.items.filter(tool => tool.kind === 'builtin' && tool.available !== false).map(tool => tool.name))
     : undefined;

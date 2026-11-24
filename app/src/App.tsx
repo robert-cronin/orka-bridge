@@ -272,7 +272,10 @@ export default function App() {
   const [homeAgent, setHomeAgent] = useState<string>();
   const [assistantError, setAssistantError] = useState<AssistantFailure>();
   const [assistantBusy, setAssistantBusy] = useState(false);
-  const openAssistant = useCallback(async () => {
+  // Read after the await, so an automatic open never pulls someone off a page they moved to.
+  const pageNow = useRef(page);
+  pageNow.current = page;
+  const openAssistant = useCallback(async (onlyFrom?: Page) => {
     setAssistantError(undefined); setAssistantBusy(true);
     try {
       setHomeAgent(await ensureAssistant());
@@ -283,10 +286,13 @@ export default function App() {
     setAssistantBusy(false);
     // Opened once either way: a failure is shown on Home, with a way to try again.
     finishChatFirst();
-    setPage('Home');
+    if (!onlyFrom || pageNow.current === onlyFrom) setPage('Home');
   }, [setPage]);
   const chatReady = !remote && workspaceReady && !workspaceBusy && setup?.model === 'available' && model === 'connected';
-  useEffect(() => { if (chatReady && chatFirstPending()) void openAssistant(); }, [chatReady, openAssistant]);
+  // Chat-first opens Home by itself only from setup, where the person is waiting for it; elsewhere the
+  // assistant is still made ready, and choosing a cluster instead ends the one-click intent.
+  useEffect(() => { if (chatReady && chatFirstPending()) void openAssistant('Clusters'); }, [chatReady, openAssistant]);
+  useEffect(() => { if (remote) finishChatFirst(); }, [remote]);
   const workspaceTransition = !!setup && ['preparing', 'installing', 'starting', 'closing', 'failed'].includes(setup.localVm);
   const overviewWorkspaceNote = !setup ? setupLine : upgradeAttention ? upgradeLine : workspaceStopping ? 'Stopping the workspace'
     : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'

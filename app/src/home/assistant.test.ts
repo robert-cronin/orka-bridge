@@ -46,6 +46,12 @@ test('reuses an existing assistant without writing anything, even one the person
   expect(calls.some(call => call.command === 'agent_create' || call.command === 'agent_save')).toBe(false);
 });
 
+test('a person’s own bridge-assistant with only a description is left alone', async () => {
+  native({ existing: true, content: '---\nname: "bridge-assistant"\ndescription: "Mine"\nmodel: "gpt-5.6-terra"\nkmx:\n  schemaVersion: 1\n  runtime: orka\n---\n\n' });
+  expect(await ensureAssistant()).toBe(id);
+  expect(calls.some(call => call.command === 'agent_save')).toBe(false);
+});
+
 test('fills an assistant an earlier attempt created but couldn’t fill, fenced on its current source', async () => {
   native({ existing: true });
   expect(await ensureAssistant()).toBe(id);

@@ -52,7 +52,7 @@ export default function Home({ active, revision, preferred, assistantError, assi
     {next && <section className={`home-next tone-${next.tone}`} aria-labelledby="home-next-title">
       <p className="home-next-kicker" id="home-next-title">Next</p>
       <p className="home-next-line" role={next.tone === 'error' ? 'alert' : 'status'}>{next.line}</p>
-      {next.action && <Button type="button" kind={next.action === 'assistant' && !chosen ? 'primary' : 'secondary'} disabled={assistantBusy} onClick={act[next.action].run}>{act[next.action].text}</Button>}
+      {next.action && <Button type="button" kind={next.action === 'assistant' && !chosen ? 'primary' : 'secondary'} onClick={act[next.action].run}>{act[next.action].text}</Button>}
     </section>}
     {agents && chosen && <>
       <div className="home-agent">
