@@ -64,7 +64,6 @@
 @media (max-width: 820px) {
   .app-shell { --sidebar-width: 76px; grid-template-areas: "title title" "nav main" "status status"; }
   .brand b, .nav-group-label, .tab-copy small { display: none; }
-  .page-nav { padding-inline: var(--space-1); }
   .page-tab { flex-direction: column; justify-content: center; gap: 2px; min-height: 52px; padding: var(--space-1) 2px; text-align: center; }
   .tab-copy { flex: none; width: 100%; }
   .tab-copy b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--size-small, 12px); line-height: 16px; }
