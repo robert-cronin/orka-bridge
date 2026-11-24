@@ -115,6 +115,8 @@ Also later:
 - **Connecting a cluster you already have,** without the local VM. Mac first; Windows after. Shared team clusters
   ([#10](https://github.com/orka-agents/orka-bridge/issues/10)) build on the namespace and role design in
   [#9](https://github.com/orka-agents/orka-bridge/issues/9).
+- **Using Bridge from the GitHub Copilot app,** picking Bridge's workspace as an environment there. See
+  [the plan and what exists today](copilot-app.md).
 - **API keys** for OpenAI, Anthropic or Azure OpenAI as an alternative to Copilot.
 - **Updating the VM** when a new image ships, keeping your agents and tests.
 - **The second hour:** running an agent on a schedule ([#1](https://github.com/orka-agents/orka-bridge/issues/1)),
