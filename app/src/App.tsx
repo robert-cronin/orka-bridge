@@ -13,6 +13,7 @@ import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
 import './firstrun/firstrun.css';
+import { ensureAssistant } from './home/assistant';
 import Home from './home/Home';
 import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
@@ -20,6 +21,7 @@ import type { ModelState } from './setup/Model';
 import { preflightRecovery } from './setup/preflight-state';
 import { setupView, workspaceView } from './setup/progress';
 import { workspaceRecovery } from './setup/recovery-info';
+import { chatFirstPending, finishChatFirst } from './setup/chat-first';
 import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Setup';
 import { hasSeenWelcome } from './setup/Welcome';
 import type { ExamplePair, SetupStatus } from './setup/state';
@@ -266,6 +268,25 @@ export default function App() {
     void observe();
     return () => { cancelled = true; clearTimeout(timer); };
   }, [page, workspaceReady, workspaceBusy, setup?.model, model]);
+  // Chat-first setup ends in a chat with Bridge's built-in assistant instead of the example agent's automatic test.
+  const [homeAgent, setHomeAgent] = useState<string>();
+  const [assistantError, setAssistantError] = useState<string>();
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const openAssistant = useCallback(async () => {
+    setAssistantError(undefined); setAssistantBusy(true);
+    try {
+      setHomeAgent(await ensureAssistant());
+      setAgentsRevision(value => value + 1);
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : String(error));
+    }
+    setAssistantBusy(false);
+    // Opened once either way: a failure is shown on Home, with a way to try again.
+    finishChatFirst();
+    setPage('Home');
+  }, [setPage]);
+  const chatReady = !remote && workspaceReady && !workspaceBusy && setup?.model === 'available' && model === 'connected';
+  useEffect(() => { if (chatReady && chatFirstPending()) void openAssistant(); }, [chatReady, openAssistant]);
   const workspaceTransition = !!setup && ['preparing', 'installing', 'starting', 'closing', 'failed'].includes(setup.localVm);
   const overviewWorkspaceNote = !setup ? setupLine : upgradeAttention ? upgradeLine : workspaceStopping ? 'Stopping the workspace'
     : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'
@@ -286,7 +307,7 @@ export default function App() {
     : cases ? 'tests passing' : 'ready to edit';
   const agentStateWord = agentStatus.match(/\b(passing|failing|running|cancelled|cancelling|unknown|unavailable|unconfirmed|not confirmed|ready)\b/);
   const tabStatus: Record<Page, string> = {
-    Home: 'Ask your agents',
+    Home: remote ? 'Runs on this computer' : 'Chat with Bridge',
     Overview: welcome ? '' : overviewCounts,
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
@@ -385,9 +406,9 @@ export default function App() {
         </div>}
         <div hidden={page !== 'Clusters'}>
           <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
-            onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
+            onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} onChat={() => { void openAssistant(); }} />
         </div>
-        {page === 'Home' && <Home active revision={agentsRevision} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}
+        {page === 'Home' && <Home active revision={agentsRevision} preferred={homeAgent} assistantError={assistantError} assistantBusy={assistantBusy} onAddAssistant={() => { void openAssistant(); }} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}
           blocked={remote ? 'Chat runs on the workspace. Choose This computer in Clusters.' : !workspaceReady || workspaceBusy ? 'Waiting for the workspace to start.'
             : setup?.model !== 'available' || aiObserved === false ? 'Connect the AI in Clusters before chatting.' : undefined}
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).

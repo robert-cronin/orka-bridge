@@ -47,3 +47,4 @@
   .workspace-option > .pill, .workspace-option > .chip { grid-column: 2; justify-self: start; }
   .workspace-option-detail { grid-column: 2; }
 }
+.welcome-other { display: flex; flex-wrap: wrap; gap: 12px 24px; }

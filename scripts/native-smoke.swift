@@ -120,7 +120,7 @@ while Date() < rendererDeadline {
         // that merely happens to be below the header.
         // The text viewport also needs the tab bar; do not query it during renderer startup.
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names)
-            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run")) { found = true; break }
+            && (names.contains("Set up Bridge") || nativeTextIsVisible("Choose where agents run")) { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
@@ -605,7 +605,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
-        let welcome = text.contains("Build an") && text.contains("does a real job") || !nativeButtons("Get started").isEmpty
+        let welcome = text.contains("Chat with Bridge") && text.contains("build your own agents") || !nativeButtons("Set up Bridge").isEmpty
         let places = text.contains("Choose where agents run") || nativeTextIsVisible("Choose where agents run")
         let detail = text.contains("Back to clusters") || text.contains("Where should your agents run?") || !nativeButtons("Continue").isEmpty
         require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
@@ -799,7 +799,7 @@ try FileManager.default.createDirectory(atPath: output, withIntermediateDirector
 setContent(1280, 800)
 var initial = try capture("initial", "Clusters")
 // Each theme owns a fresh runner profile; verify retention after its own restart.
-let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Get started" }
+let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Set up Bridge" }
 require(initiallyWelcome, "Expected a first-run welcome in the fresh \(theme) job")
 for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
     setContent(width, height)
@@ -807,15 +807,15 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
     try capture("welcome-\(size)", "Clusters")
     scrollMain(-4000)
     try capture("welcome-\(size)-end", "Clusters")
-    require(visibleButtons("Get started").count == 1 && nativeTextIsVisible("About 5 minutes, mostly a download"),
+    require(visibleButtons("Set up Bridge").count == 1 && nativeTextIsVisible("About 5 minutes, mostly a download"),
             "Welcome next action and time cue must remain reachable at \(size)")
-    require(nativeStrings().contains { $0.contains("Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
+    require(visibleButtons("Set up step by step").count == 1, "Welcome lost the step-by-step route")
     requireNoLocalWorkspace()
 }
 setContent(1280, 800)
 scrollMain(4000)
-if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
-    clickText("Get started", in: initial)
+if initial.contains(where: { $0.topCandidates(1).first?.string == "Set up step by step" }) {
+    clickText("Set up step by step", in: initial)
     initial = try capture("places-empty", "Clusters")
 }
 try localPreflight("local-preflight")
@@ -938,7 +938,7 @@ app = try launch()
 app.activate(options: [])
 waitForWorkspaceRenderer()
 let retained = try capture("places-retained", "Clusters")
-require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
+require(!retained.contains { $0.topCandidates(1).first?.string == "Set up Bridge" },
         "Restart must retain welcome dismissal without starting a workspace")
 clickTab("Overview", retained)
 _ = try capture("overview", "Overview")

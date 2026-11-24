@@ -28,43 +28,41 @@ function native(initial: object = unselected, sizing: unknown = requirements) {
 beforeEach(() => { localStorage.clear(); });
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-test('Get started remembers the welcome without starting a workspace, including on remount', async () => {
+test('Set up step by step remembers the welcome without starting a workspace, including on remount', async () => {
   const ipc = native(); const user = userEvent.setup(); const first = render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Build an AI agent that does a real job' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Chat with Bridge, then build your own agents' })).toBeTruthy();
   await waitFor(() => expect(document.querySelector('#tab-status-Overview')?.textContent).toBe(''));
-  expect(screen.getByText('Write it')).toBeTruthy();
-  expect(screen.getByText('Test it')).toBeTruthy();
-  expect(screen.getByText('Share it')).toBeTruthy();
-  expect(screen.getByText('About 5 minutes, mostly a download').parentElement).toBe(screen.getByRole('button', { name: 'Get started' }).parentElement);
-  expect(screen.getByText("Send it to your team's cluster (preview).")).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Get started' }));
+  expect(screen.getByText('Ask Bridge anything. Make your own agents when you’re ready.')).toBeTruthy();
+  expect(screen.getByText('About 5 minutes, mostly a download').parentElement).toBe(screen.getByRole('button', { name: 'Set up Bridge' }).parentElement);
+  expect(screen.getByText('Downloads about 2.8 GB and uses 6.4 GB of memory while it runs.')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Set up step by step' }));
   const heading = await screen.findByRole('heading', { name: 'Clusters' });
   expect(document.activeElement).toBe(heading);
   expect(localStorage.getItem(preference)).toBe('1');
   first.unmount(); render(<App />);
   expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Set up Bridge' })).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
-test('welcome chrome advances only after Get started, including with denied preference storage', async () => {
+test('welcome chrome advances only after Set up step by step, including with denied preference storage', async () => {
   native(); vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
   const user = userEvent.setup(); render(<App />);
   expect(await within(screen.getByRole('navigation')).findByText('Start here')).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).getByText('Nothing is set up yet')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Get started' }));
+  await user.click(screen.getByRole('button', { name: 'Set up step by step' }));
   expect(within(screen.getByRole('navigation')).getByText('Choose where agents run')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(document.querySelectorAll('#page-title')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Set up Bridge' })).toBeNull();
 });
 
 test('a saved native choice skips welcome even without a renderer preference', async () => {
   const ipc = native({ selected: 'localVm', localVm: 'starting', model: 'locked' }); render(<App />);
   expect(await screen.findByText('Starting the workspace…')).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Set up Bridge' })).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
@@ -122,11 +120,11 @@ test('debug requirements without a download retain RAM checks and disk facts wit
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
 });
 
-test('release welcome exposes unavailability before Get started without replacing the workflow copy', async () => {
+test('release welcome exposes unavailability and cannot start one-click setup', async () => {
   const ipc = native({ ...unselected, localVm: 'notIntegrated' }, null); render(<App />);
-  expect(await screen.findByRole('button', { name: 'Get started' })).toBeTruthy();
+  expect((await screen.findByRole('button', { name: 'Set up Bridge' })).matches(':disabled')).toBe(true);
   expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
-  expect(screen.getByText('Share it')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Set up step by step' }).matches(':disabled')).toBe(false);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
@@ -139,7 +137,7 @@ test('release-unavailable setup stays explicit and does not invent requirements'
 test.each(['getItem', 'setItem'] as const)('denied preference %s does not prevent setup', async method => {
   native(); vi.spyOn(Storage.prototype, method).mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  await user.click(await screen.findByRole('button', { name: 'Set up step by step' }));
   expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
 });
 
@@ -166,7 +164,7 @@ test('an unseen welcome cannot hide a failed status read or overwrite its prefer
     : command === 'setup_requirements' ? requirements : Promise.reject({ kind: 'unavailable' }));
   mockIPC(ipc); const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('alert')).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Set up Bridge' })).toBeNull();
   expect(localStorage.getItem(preference)).toBeNull();
   failed = false;
   await user.click(screen.getByRole('button', { name: 'Check again' }));
@@ -181,8 +179,8 @@ test('a delayed initial status cannot flash welcome over an existing workspace',
   mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? new Promise(resolve => { complete = resolve; })
     : command === 'setup_requirements' ? requirements : Promise.reject({ kind: 'unavailable' }));
   render(<App />);
-  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Set up Bridge' })).toBeNull();
   complete({ selected: 'localVm', localVm: 'starting', model: 'locked' });
   await waitFor(() => expect(screen.getByText('Starting the workspace…')).toBeTruthy());
-  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Set up Bridge' })).toBeNull();
 });

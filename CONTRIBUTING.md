@@ -89,9 +89,10 @@ See [the helper build instructions](app/src-tauri/native/macos/README.md).
 Intel Macs can build the app but cannot run its local VM. Both pinned images
 support model Connect, the workspace catalog and the example agent.
 
-In Clusters, dismiss the one-time welcome with Get started, then press Set up
-on This computer's place and Continue after its computer checks. On Windows and
-Apple-silicon Mac, the running VM unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
+In Clusters, choose Set up step by step on the one-time welcome, then press Set up
+on This computer's place and Continue after its computer checks (Set up Bridge
+starts the workspace in one click instead). On Windows and Apple-silicon Mac, the
+running VM unlocks Connect the AI with GitHub Copilot, which needs GitHub CLI already installed and signed
 in to github.com. Bridge does not install it or open browser sign-in. Starting
 a VM alone does not verify model inference. Local images are debug-only;
 release builds ignore `BRIDGE_DEV_IMAGE_DIR`. Supported release builds select
@@ -102,7 +103,7 @@ still needs the [preview walks](docs/preview.md) before app publication.
 
 ## Reopen and remove the saved sign-in
 
-After **Quit Bridge**, reopen Bridge and use **Use GitHub sign-in**
+After **Quit Bridge**, reopen Bridge and use **Connect the AI**
 once the workspace is running. Bridge reuses its native-store copy without
 reading GitHub CLI again. A new VM boot first disconnects the prior owned model
 route. This requires an image built with the retained-connection cleanup handler;

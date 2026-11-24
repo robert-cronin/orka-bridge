@@ -1266,10 +1266,10 @@ try {
     if (name === 'welcome') {
       const welcome = await evaluate(`(() => {
         const root = document.querySelector('.welcome-screen');
-        const start = [...root.querySelectorAll('button')].find(button => button.textContent === 'Get started');
-        return { text: root.innerText, primary: start?.classList.contains('button-primary'), expert: [...root.querySelectorAll('button')].some(button => button.textContent.includes('I already run Orka on a cluster')) };
+        const start = [...root.querySelectorAll('button')].find(button => button.textContent === 'Set up Bridge');
+        return { text: root.innerText, primary: start?.classList.contains('button-primary'), expert: [...root.querySelectorAll('button')].some(button => button.textContent.includes('I already run Orka on a cluster')), stepByStep: [...root.querySelectorAll('button')].some(button => button.textContent === 'Set up step by step') };
       })()`);
-      if (!welcome.primary || !welcome.expert || !welcome.text.includes("Send it to your team's cluster (preview).")) throw Error('Welcome lost its primary, expert route or preview caveat: ' + JSON.stringify(welcome));
+      if (!welcome.primary || !welcome.expert || !welcome.stepByStep) throw Error('Welcome lost its primary, expert or step-by-step route: ' + JSON.stringify(welcome));
     }
     if (preflight) {
       if (name !== 'local-preflight-missing') await until(() => evaluate(`document.querySelector('[aria-label="Computer requirements"]')?.getAttribute('aria-busy') === 'false'`), 'settled computer checks');
@@ -1390,7 +1390,7 @@ try {
       // The compact loop uses 540×640; preserve the choice and its scrolled action.
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
       await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
-      const actionLabel = name === 'welcome' ? 'Get started' : 'Continue';
+      const actionLabel = name === 'welcome' ? 'Set up Bridge' : 'Continue';
       const reachable = await evaluate(`(() => {
         const button = [...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(actionLabel)} && button.getClientRects().length);
         const r = button?.getBoundingClientRect(), main = document.querySelector('main').getBoundingClientRect();
@@ -1400,8 +1400,8 @@ try {
       const end = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}-end.png`), Buffer.from(end.data, 'base64'));
       if (name === 'welcome') {
-        await clickAction('Get started');
-        await until(() => evaluate(`document.body.innerText.includes('Choose where agents run') && !document.querySelector('.welcome-screen')`), 'Get started retains Places navigation');
+        await clickAction('Set up step by step');
+        await until(() => evaluate(`document.body.innerText.includes('Choose where agents run') && !document.querySelector('.welcome-screen')`), 'Set up step by step retains Places navigation');
       } else if (name === 'local-preflight-cluster') {
         await clickAction('Continue');
         await until(() => evaluate(`!!document.querySelector('.cluster-card')?.getClientRects().length`), 'existing cluster chooser');

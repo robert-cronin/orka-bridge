@@ -59,7 +59,7 @@ test('explains why it cannot send and links to Clusters', async () => {
 
 test('names the page with its heading', async () => {
   render(<main aria-labelledby="page-title"><Home active revision={0} onOpenAgent={() => {}} onChooseWorkspace={() => {}} /></main>);
-  expect(screen.getByRole('main', { name: 'What should your agents do?' })).toBeTruthy();
+  expect(screen.getByRole('main', { name: 'What can Bridge do for you?' })).toBeTruthy();
 });
 
 test('an agent-specific reason blocks sending to that agent only', async () => {
@@ -88,4 +88,27 @@ test('a failed read of the agent list is not shown as having no agents, and can 
   await user.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('combobox', { name: 'Ask' })).toBeTruthy();
   expect(reads).toBe(2);
+});
+
+test('adding Bridge’s assistant selects it even after another agent was chosen', async () => {
+  const user = userEvent.setup(); let revision = 0;
+  const added = '4b2b93c4-375c-4815-9717-39852a96e414';
+  const view = render(<Home active revision={revision} onOpenAgent={() => {}} onChooseWorkspace={() => {}} onAddAssistant={() => {}} />);
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Ask' }), 'inbox-summary');
+  await user.click(screen.getByRole('button', { name: 'Add Bridge’s assistant' }));
+  mockIPC((command, args) => {
+    if (command === 'agents_list') return [{ id: other, name: 'inbox-summary', path: null, available: true }, { id: added, name: 'bridge-assistant', path: null, available: true }];
+    if (command === 'agent_chat_status') return snapshot((args as { documentId: string }).documentId);
+    throw Error(`unexpected ${command}`);
+  });
+  revision++;
+  view.rerender(<Home active revision={revision} preferred={added} onOpenAgent={() => {}} onChooseWorkspace={() => {}} onAddAssistant={() => {}} />);
+  await waitFor(() => expect((screen.getByRole('combobox', { name: 'Ask' }) as HTMLSelectElement).value).toBe(added));
+  expect(screen.getByText('Ask Bridge below. Answers come from your workspace on this computer.').getAttribute('role')).toBe('status');
+});
+
+test('while the assistant is being set up, its action is disabled and the wait is announced', async () => {
+  render(<Home active revision={0} assistantBusy onOpenAgent={() => {}} onChooseWorkspace={() => {}} onAddAssistant={() => {}} />);
+  expect((await screen.findByText('Setting up Bridge’s assistant…')).getAttribute('role')).toBe('status');
+  expect(screen.queryByRole('button', { name: 'Add Bridge’s assistant' })).toBeNull();
 });

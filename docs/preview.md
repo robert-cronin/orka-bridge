@@ -86,21 +86,31 @@ Apple's [per-app exception instructions](https://support.apple.com/en-us/102445)
 and Microsoft's [SmartScreen guidance](https://learn.microsoft.com/windows/apps/package-and-deploy/publish-first-app)
 describe these prompts.
 
-## Set up and run the example
+## Set up and chat with Bridge
 
-1. Open **Clusters**. Choose **Get started** on the first visit, then
-   **Set up** on **This computer** and **Continue**.
-2. Leave Bridge open while it downloads, verifies and installs the image,
-   then starts the VM. You don't need to choose an image or download URL.
-3. Once ready, choose **Use GitHub sign-in** in the model section, having
-   read the token warning above. Wait for the model to connect.
-4. Choose **Read its instructions** to open `web-reader` in **Designer**, the agent
+1. On the first visit, Bridge opens on a welcome page. Choose **Set up Bridge**.
+   Bridge starts setting up the workspace on this computer straight away.
+2. While it downloads, verifies and installs the image, choose **GitHub Copilot**
+   under **Connect the AI** (or your own API key), having read the token warning
+   above. You don't need to choose an image or download URL.
+3. When the workspace is ready, choose **Connect the AI** if Bridge asks, and wait
+   until the AI step shows **Connected**.
+4. Bridge opens **Home** with **Bridge** selected. Send it a question and check it answers.
+   Bridge's assistant is an ordinary agent, `bridge-assistant`, in `Orka/agents`
+   under your home folder; you can change it in **Designer**.
+
+## Run the example agent
+
+To set up step by step instead, choose **Set up step by step** on the welcome page,
+then **Set up** on **This computer** and **Continue**. Connect the AI as above, then:
+
+1. Choose **Read its instructions** to open `web-reader` in **Designer**, the agent
    editor. Its files live in `Orka/agents/web-reader` under your home folder.
-5. Choose **Run tests** on **Tests on the local cluster**. Save any edits before running.
+2. Choose **Run tests** on **Tests on the local cluster**. Save any edits before running.
    For the unchanged example, look for **1 of 1 passed**.
    Expand its **Passed** result to read the answer and check **Tools used**
    includes `web_fetch`. “Model connected” alone doesn't prove inference.
-6. Report a failed or unknown result. Use **Copy details for help** if shown
+3. Report a failed or unknown result. Use **Copy details for help** if shown
    and note the last step that worked.
 
 ## Stop and reopen
@@ -112,7 +122,7 @@ Choose **Quit Bridge** from that icon's menu to stop it completely.
 Wait for quitting to finish before moving or deleting files.
 
 Quitting keeps VM files and your saved sign-in. On reopening, Bridge reuses
-its workspace and starts it automatically; **Use GitHub sign-in** reuses Bridge's saved copy.
+its workspace and starts it automatically; **Connect the AI** reuses Bridge's saved copy.
 
 ## Remove Bridge
 

@@ -5,4 +5,8 @@
 .home-agent { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .home-agent label { color: var(--color-text-secondary); font: var(--type-small); font-weight: 500; }
 .home-agent select { width: auto; min-width: 12rem; }
-.home-blocked { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--color-text-secondary); }
+/* One sentence on where things stand, and at most one action. */
+.home-next { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-card, 10px); background: var(--color-card); box-shadow: 0 0 0 1px var(--color-border); }
+.home-next-kicker { flex-basis: 100%; margin: 0; color: var(--color-text-tertiary); font: var(--type-small); font-weight: 500; }
+.home-next-line { flex: 1 1 16rem; margin: 0; }
+.home-next.tone-error .home-next-line { color: var(--color-status-failed); }

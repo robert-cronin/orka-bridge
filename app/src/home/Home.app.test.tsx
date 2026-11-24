@@ -60,7 +60,7 @@ test('Home applies Designer\'s chat gate for the agent Designer has open', async
   await screen.findByRole('textbox', { name: 'Instructions' });
   await user.click(screen.getByRole('button', { name: 'Home' }));
   // Designer's Chat stays mounted but hidden, so look only inside Home.
-  const home = await screen.findByRole('region', { name: 'What should your agents do?' });
+  const home = await screen.findByRole('region', { name: 'What can Bridge do for you?' });
   expect((await within(home).findAllByText('Write instructions in Agent view before chatting.', { exact: false })).length).toBeGreaterThan(0);
   expect(within(home).getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
 });

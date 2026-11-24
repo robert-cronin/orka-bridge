@@ -556,8 +556,8 @@ click("Clusters", [])
 // This synthetic reset is a fresh choice, so acknowledge Welcome explicitly;
 // Stop no longer provides that unrelated presentation side effect.
 try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
-waitForButton("Get started")
-click("Get started", [])
+waitForButton("Set up step by step")
+click("Set up step by step", [])
 for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
     try "preflight-\(state)".write(to: setupProgress, atomically: true, encoding: .utf8)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -1596,7 +1596,7 @@ if scope == .destinationsWorkspace {
     // Fresh defaults: selected/ready local workspace, no installing/returning reset.
     localSize(1280, 800)
     press("Clusters")
-    if anyButton("Get started") { press("Get started") }
+    if anyButton("Set up step by step") { press("Set up step by step") }
     if !anyButton("Add a cluster") { press("Clusters") }
     waitForButton("Add a cluster")
     require(!FileManager.default.fileExists(atPath: setupProgress.path), "Allocated bootstrap must not write setup progress before its journey")

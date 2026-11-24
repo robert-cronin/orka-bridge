@@ -19,13 +19,15 @@ type Props = {
   upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean;
   modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement>;
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
+  // One-click setup ends in a chat with Bridge instead of the example agent's first test.
+  chatFirst?: boolean; onChat?: () => void;
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void; onChooseProvider?: () => void;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onOpenExample: () => void;
 };
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 // Completed rows stay in place; only the active row opens its progress.
-function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic'>) {
+function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic, chatFirst }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'chatFirst'>) {
   const view = setupView(status, { stopping, model: modelState, check: firstCheck, initialAutomatic });
   const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
@@ -45,9 +47,10 @@ function stepRows({ status, stopping, updating, updateBlocked, error, modelState
   const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'stale', stale: 'stale' }[firstCheck] as Status,
     { running: 'Running', passed: 'Its test passed', failed: 'Its test failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
     : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
-  const names = ['Where agents run', 'Get your workspace ready', 'Connect the AI', 'Run your first agent'];
+  const chat: [Status, string] = status.localVm === 'ready' && connected ? ['passed', 'Ready'] : ['not-started', 'Waiting'];
+  const names = ['Where agents run', 'Get your workspace ready', 'Connect the AI', chatFirst ? 'Chat with Bridge' : 'Run your first agent'];
   // After an unreadable poll the snapshot is last known, not observed: keep the words but nothing runs or is current.
-  const rows = [ ['passed', 'On this computer'] as [Status, string], workspace, model, test].map(([state, result], i) => ({ name: names[i], state: error ? 'not-started' as Status : state, result: error ? `Last known: ${result}` : result }));
+  const rows = [ ['passed', 'On this computer'] as [Status, string], workspace, model, chatFirst ? chat : test].map(([state, result], i) => ({ name: names[i], state: error ? 'not-started' as Status : state, result: error ? `Last known: ${result}` : result }));
   return { view, failed, paused, infra, rows };
 }
 
@@ -97,7 +100,8 @@ export function SetupProgress(props: Props) {
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button><span className="muted">Cancel pauses setup. Your downloaded files are kept.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <Button type="button" kind="secondary" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}
       {paused && (props.ordinaryRecovery ?? !props.upgrade) && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onRestart}>Start again</Button>}
-      {ready && <>{props.modelState === 'connected' && !needsModel && <>
+      {ready && props.chatFirst && props.modelState === 'connected' && props.onChat && <Button type="button" kind="primary" disabled={busy || !!error} onClick={props.onChat}>Chat with Bridge</Button>}
+      {ready && !props.chatFirst && <>{props.modelState === 'connected' && !needsModel && <>
         {props.firstCheck === 'stale' ? <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Run it again</Button>
           : (props.firstCheck === 'unknown' || ((props.firstCheck === 'passed' || props.firstCheck === 'failed') && !props.firstTestResult)) ? <Button type="button" kind="primary" disabled={busy || !!error || !props.onCheckFirstTest} onClick={props.onCheckFirstTest}>Check again</Button>
           : !props.firstCheck && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Open your first agent</Button>}
@@ -107,7 +111,7 @@ export function SetupProgress(props: Props) {
   </section>;
 }
 
-export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'chatFirst' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
   const { status, busy, error, onRestart, onCluster } = props;
   const { view, failed, rows } = stepRows(props);
   return <ol className="steps-four" aria-label="Setup steps">
@@ -139,5 +143,15 @@ export function Meet({ onRead, onName }: { onRead: () => void; onName?: (name: s
         <div><dt>Whose is it</dt><dd>Yours. After setup, change its instructions and tests, or start a new agent.</dd></div></dl>
       <Button type="button" kind="secondary" onClick={onRead}>Read its instructions</Button></>
       : <p className="muted">{failed ? 'The example could not be opened. Try opening Designer.' : "Opening the example's introduction…"}</p>}
+  </section>;
+}
+
+export function MeetBridge() {
+  return <section className="card workspace-meet" aria-labelledby="meet-title">
+    <span className="workspace-kicker">While you wait</span><h2 id="meet-title">Meet Bridge</h2>
+    <p className="meet-description">Your built-in assistant. When setup finishes, ask it anything.</p>
+    <dl><div><dt>It can</dt><dd>Search and read the web, and run code for calculations, using the tools your workspace offers.</dd></div>
+      <div><dt>Where it runs</dt><dd>In your workspace on this computer. Its file is an ordinary agent you can change.</dd></div>
+      <div><dt>Your own agents</dt><dd>When you have a job to repeat, make an agent for it in Designer. You can also start from the example agent there.</dd></div></dl>
   </section>;
 }

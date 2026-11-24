@@ -232,8 +232,8 @@ let originalID = windowInfo()!.0
 var main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
 press(find(main, "Clusters") { pressable($0, "Clusters") })
 // The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
-wait("Welcome or Places did not appear") { nodes(main).contains { pressable($0, "Get started") || pressableAction($0, "Set up") } }
-if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
+wait("Welcome or Places did not appear") { nodes(main).contains { pressable($0, "Set up step by step") || pressableAction($0, "Set up") } }
+if let start = nodes(main).first(where: { pressable($0, "Set up step by step") }) { press(start) }
 // Places owns the local entry: this computer's Set up action beside an empty cluster list.
 let setUp = find(main, "places-set-up") {
     pressableAction($0, "Set up") && shownStrings(main).contains { $0.contains("No other clusters added yet") }

@@ -21,7 +21,7 @@ Use these words in app headings, buttons, help and status messages. Give each id
 
 - **Clusters** is the tab and page heading. Use **Choose where agents run** as its subtitle, **Add a cluster**, **No cluster selected** and **Back to clusters**.
 - Use **This computer** as the device's label in the cluster list, and “this computer” in sentences; call the installed result **the local cluster**. For example: “Set up the local cluster on this computer.”
-- Name the setup step **Run your first agent**. Its result says **Its test passed** or **Its test failed**, with **See what it answered** and **Run it again**. Keep **Tests** and **Run tests** in Designer.
+- On the step-by-step path, name the last setup step **Run your first agent**; on the one-click path (**Set up Bridge**) it is **Chat with Bridge**. Its result says **Its test passed** or **Its test failed**, with **See what it answered** and **Run it again**. Keep **Tests** and **Run tests** in Designer.
 - Say **Connect the AI**, **AI connected** or **AI needs attention**. Do not repeat the same state within one message.
 - Lead with the result and the next action. Cut storage and implementation explanations from everyday copy. Keep troubleshooting facts in Details.
 - Orka remains the platform's proper name, not a synonym for cluster. Keep literal file contents, identifiers, paths, resource types (including Agent and Provider), and diagnostic output accurate in File view and Details. Words such as token and credentials belong there when needed for troubleshooting. Do not rename API fields or saved data. Outside those views, use plain descriptions such as **agent without a linked file**, not **Unassociated Agent**.

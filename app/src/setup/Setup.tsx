@@ -10,7 +10,8 @@ import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { canQueueModel, setupView } from './progress';
 import { formatRequirementGB, type WorkspaceRequirements, workspaceRequirements } from './requirements';
-import { type CheckStepState, Meet, SetupProgress } from './Steps';
+import { type CheckStepState, Meet, MeetBridge, SetupProgress } from './Steps';
+import { armChatFirst, chatFirstChosen, chatFirstDone, chatFirstPending } from './chat-first';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import Workspace from './Workspace';
@@ -27,9 +28,10 @@ const runtimeCopy = {
 };
 export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
 export type LocalClusterControl = { showPlaces: () => void };
-export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
+export default function Setup({ ref, onOpenExample, onOpenAgent, onChat, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
   ref?: Ref<LocalClusterControl>;
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
+  onChat?: () => void;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
@@ -86,7 +88,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }, [sending, pendingAction, upgrading, occupied, upgradeObservation.pending, notice, onWorkspaceAction]);
   const [workspace, setWorkspace] = useState(false);
   const initialStatus = useRef(true);
-  const returningSession = useRef(firstTestAttempted());
+  const returningSession = useRef(firstTestAttempted() || chatFirstDone());
   useEffect(() => { onWorkspaceMode?.(workspace); }, [workspace, onWorkspaceMode]);
   const mutation = useRef(false);
   const mounted = useRef(false);
@@ -176,7 +178,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       const returning = returningSession.current;
       if (result.ok) {
         if (initialStatus.current) {
-          // A saved choice also exists mid-setup. Only a retired first-test intent proves a returning session.
+          // A saved choice also exists mid-setup. Only a retired first-test intent, or a finished chat-first setup, proves a returning session.
           setWorkspace(result.status.selected === 'localVm' && result.status.localVm !== 'notIntegrated' && returning); initialStatus.current = false;
         }
         workspaceReplaced.current ||= !!result.status.workspaceReplaced;
@@ -262,6 +264,14 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     focusChoice.current = true;
     setSeen(true);
   }
+  const [chatFirst, setChatFirst] = useState(chatFirstChosen);
+  // One click: start this computer's workspace now. Native still runs its computer checks and
+  // reports a failure on the local page. If an update check is pending, the page offers Continue.
+  function startChatFirst() {
+    start(); armChatFirst(); setChatFirst(true);
+    setLocation('local'); setPanel('local');
+    void chooseLocal();
+  }
   function publishPlace(value: SelectedPlace) { setOwnPlace(value); onPlace?.(value); }
   function chooseCluster(item?: Place, selected = false) {
     retireFirstTest();
@@ -271,7 +281,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }
   function openExample() { if (firstPass) setPayoffDismissed(true); chooseComputer(); onOpenExample(); }
   function back() { focusChoice.current = true; setPanel('places'); }
-  function openLocal() { focusChoice.current = true; if (status?.selected === 'localVm' && status.localVm !== 'notIntegrated' && firstCheck && !firstTestPending() && (!firstPass || payoffDismissed)) setWorkspace(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
+  function openLocal() { focusChoice.current = true; if (status?.selected === 'localVm' && status.localVm !== 'notIntegrated' && (firstCheck || chatFirstDone()) && !firstTestPending() && (!firstPass || payoffDismissed)) setWorkspace(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
   function removed(key: string, targetId: string | undefined, navigate: boolean) {
     const current = currentPlaceRef.current;
     if (targetId && current.kind === 'cluster' && current.target?.id === targetId) publishPlace({ kind: 'cluster' });
@@ -289,7 +299,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed', 'failed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
     const firstStart = action === 'start' && status.selected !== 'localVm';
-    if (firstStart) armFirstTest();
+    // One-click setup leads to a chat with Bridge, so it doesn't queue the example's automatic test.
+    if (firstStart && !chatFirstPending()) armFirstTest();
     clearTimeout(timer.current);
     ++epoch.current;
     mutation.current = true;
@@ -320,7 +331,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
-  if (welcome && status) return <Welcome titleId={titleId} onStart={start} onCluster={() => chooseCluster()} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
+  if (welcome && status) return <Welcome titleId={titleId} onStart={startChatFirst} onStepByStep={start} onCluster={() => chooseCluster()} requirements={requirements} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);
   const aiHeadings: Partial<Record<ModelState, string>> = {
@@ -383,12 +394,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         <div className="setup-column setup-main">
         {!workspace && !selected && upgradePanel}
         {workspace && status && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} active={active && view === 'local'} />}
-        {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
+        {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} chatFirst={chatFirst} onChat={onChat} />}
         </div>
         <div className="setup-column setup-side">
         {workspace && status?.localVm !== 'ready' && <section className="card"><h2>AI</h2><p className="muted">Waiting for the workspace to start.</p></section>}
         {status && modelMounted && <div className="setup-model-slot" hidden={workspace && status.localVm !== 'ready'}><Model key={upgrade?.credential === 'transferred' ? 'shared' : 'ordinary'} sharedConnection={upgrade?.credential === 'transferred'} title={workspace ? 'AI' : undefined} inline={!workspace && !status.workspaceReplaced && canQueueModel(status)} choiceTarget={workspace ? null : stepChoice} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : workspace ? null : stepRecovery} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
-        {!workspace && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={openExample} onName={onExampleName} />}
+        {!workspace && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && (chatFirst ? <MeetBridge /> : <Meet onRead={openExample} onName={onExampleName} />)}
         </div>
       </div>
     </div>

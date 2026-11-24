@@ -139,6 +139,9 @@ function reply(documentId: string, message: string, turns: Turn[]) {
     return url ? `I read ${url}.\n\n- It is a placeholder page kept for documentation examples.\n- It has one heading and one paragraph.\n- It links to an explanation of why the domain is reserved.`
       : 'Send me a link and I will read the page and tell you what it says.';
   }
+  if (doc?.name === 'bridge-assistant') {
+    return 'Hi, I’m Bridge. This preview answers with scripted text; in the desktop app I answer with the AI in your workspace and can search the web and read pages for you.\n\n- Ask me a question, or for help with a small job.\n- For a job you repeat, make your own agent in Designer.';
+  }
   return `This preview answers with scripted text. In the desktop app, ${doc?.name ?? 'your agent'} answers with the AI in your workspace.${turns.length > 1 ? `\n\nThis conversation has ${turns.length} messages so far.` : ''}`;
 }
 
