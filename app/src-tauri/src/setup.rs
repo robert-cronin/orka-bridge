@@ -80,6 +80,18 @@ pub struct SetupRequirements {
     image_bytes: u64,
     state_disk_bytes: u64,
     download_bytes: Option<u64>,
+    free_disk_bytes: u64,
+}
+/// Free space to have on the drive holding the user profile before setup: room for the image
+/// download, its cache and private copy, disk growth and working space. Matches docs/preview.md.
+/// The exact check is still native: image work stops with NoSpace before writing what won't fit.
+pub const fn free_disk_budget() -> u64 {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if cfg!(windows) {
+        60 * GIB
+    } else {
+        75 * GIB
+    }
 }
 fn requirements_from(
     image_bytes: Option<u64>,
@@ -90,6 +102,7 @@ fn requirements_from(
         image_bytes: image_bytes?,
         state_disk_bytes: bridge_runtime_protocol::STATE_BYTES,
         download_bytes,
+        free_disk_bytes: free_disk_budget(),
     })
 }
 /// Debug overrides retain engineering sizes; release uses the selected platform image.
@@ -114,6 +127,16 @@ pub fn setup_requirements() -> Option<SetupRequirements> {
 mod requirements_tests {
     use super::*;
     #[test]
+    fn free_disk_budget_matches_the_documented_platform_budget() {
+        let gib = 1024 * 1024 * 1024;
+        assert_eq!(
+            free_disk_budget(),
+            if cfg!(windows) { 60 * gib } else { 75 * gib }
+        );
+        let guide = include_str!("../../../docs/preview.md");
+        assert!(guide.contains("**60 GiB free on Windows** or **75 GiB on Mac**"));
+    }
+    #[test]
     fn requirements_use_protocol_sizes_and_exact_fields() {
         let r = requirements_from(Some(7), Some(5)).unwrap();
         assert_eq!(
@@ -122,7 +145,8 @@ mod requirements_tests {
                 "memoryBytes": bridge_runtime_protocol::MEMORY_BYTES,
                 "imageBytes": 7,
                 "stateDiskBytes": bridge_runtime_protocol::STATE_BYTES,
-                "downloadBytes": 5
+                "downloadBytes": 5,
+                "freeDiskBytes": free_disk_budget()
             })
         );
         assert_eq!(requirements_from(None, None), None);

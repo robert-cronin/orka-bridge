@@ -339,8 +339,8 @@ try {
         Press $clusters
         Save-BrowserDiagnostics 'loaded'
         # The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
-        Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
-        $start = Find-Control $script:window 'Get started' $button
+        Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Set up step by step' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
+        $start = Find-Control $script:window 'Set up step by step' $button
         if ($start) { Press $start }
         # Places owns the local entry: this computer's Set up action beside an empty cluster list.
         $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No other clusters added yet')) { $control } }
@@ -356,7 +356,7 @@ try {
         Wait-For 'Local size facts did not settle' {
             $names = Get-UiNames $script:window
             $text = ($names -join ' ') -replace '\s+', ' '
-            ($text -cmatch 'Needs virtualization and \d+\.\d GB of memory') -and ($text -cmatch 'image size is \d+\.\d GB after installation, not the amount downloaded') -and ($text -cmatch 'Data disk can grow to \d+\.\d GB') -and !($names -cmatch '^Reading|Unavailable in this build')
+            ($text -cmatch 'Needs virtualization, \d+\.\d GB of memory and about \d+\.\d GB of free disk space') -and ($text -cmatch 'image size is \d+\.\d GB after installation, not the amount downloaded') -and ($text -cmatch 'Data disk can grow to \d+\.\d GB') -and !($names -cmatch '^Reading|Unavailable in this build')
         } | Out-Null
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'

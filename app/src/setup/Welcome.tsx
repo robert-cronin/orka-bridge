@@ -13,7 +13,7 @@ export function hasSeenWelcome() {
 export default function Welcome({ titleId, onStart, onStepByStep, onCluster, unavailable, requirements }: {
   titleId?: string; onStart: () => void; onStepByStep: () => void; onCluster: () => void; unavailable?: string; requirements?: WorkspaceRequirements | null;
 }) {
-  const cost = requirements ? `${requirements.downloadBytes !== null ? `Downloads about ${formatRequirementGB(requirements.downloadBytes)} and uses` : 'Uses'} ${formatRequirementGB(requirements.memoryBytes)} of memory while it runs.` : undefined;
+  const cost = requirements ? `Needs about ${formatRequirementGB(requirements.freeDiskBytes)} of free disk space${requirements.downloadBytes !== null ? `, downloads about ${formatRequirementGB(requirements.downloadBytes)},` : ''} and uses ${formatRequirementGB(requirements.memoryBytes)} of memory while it runs.` : undefined;
   return <section className="welcome-screen">
     <img className="welcome-mark" src={mark} width="44" height="44" alt="" />
     <h1 id={titleId}>Chat with Bridge, then build your own agents</h1>

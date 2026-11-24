@@ -6,14 +6,16 @@ export type PreflightFailure = (typeof failures)[number];
 export type HostPreflight = {
   platform: 'windows' | 'macos'; virtualization: 'ready' | 'disabled' | 'hypervisorUnavailable' | 'unsupported' | 'unknown';
   memory: 'ready' | 'insufficient' | 'unknown'; installedMemoryBytes: number | null; requiredMemoryBytes: number;
+  // Free space is advice: native measures the exact need and stops before writing what won't fit.
+  disk: 'ready' | 'low' | 'unknown'; availableDiskBytes: number | null; recommendedDiskBytes: number;
 };
 export const isPreflightFailure = (value: unknown): value is PreflightFailure => failures.some(f => f === value);
-export async function readPreflight(required: number): Promise<HostPreflight | null> {
+export async function readPreflight(required: number, recommendedDisk: number): Promise<HostPreflight | null> {
   if (!isTauri()) return null;
   try {
     const value: unknown = await invoke('setup_preflight');
     if (typeof value !== 'object' || value === null || Array.isArray(value)
-      || Object.keys(value).sort().join(',') !== 'installedMemoryBytes,memory,platform,requiredMemoryBytes,virtualization') return null;
+      || Object.keys(value).sort().join(',') !== 'availableDiskBytes,disk,installedMemoryBytes,memory,platform,recommendedDiskBytes,requiredMemoryBytes,virtualization') return null;
     const p = value as Record<string, unknown>;
     if (!['windows', 'macos'].includes(p.platform as string)
       || !['ready', 'disabled', 'hypervisorUnavailable', 'unsupported', 'unknown'].includes(p.virtualization as string)
@@ -21,6 +23,10 @@ export async function readPreflight(required: number): Promise<HostPreflight | n
       || p.requiredMemoryBytes !== required
       || (p.installedMemoryBytes !== null && !(typeof p.installedMemoryBytes === 'number' && Number.isSafeInteger(p.installedMemoryBytes) && p.installedMemoryBytes > 0))
       || ((p.memory === 'unknown') !== (p.installedMemoryBytes === null))
+      || !['ready', 'low', 'unknown'].includes(p.disk as string) || p.recommendedDiskBytes !== recommendedDisk
+      || (p.availableDiskBytes !== null && !(typeof p.availableDiskBytes === 'number' && Number.isSafeInteger(p.availableDiskBytes) && p.availableDiskBytes >= 0))
+      || ((p.disk === 'unknown') !== (p.availableDiskBytes === null))
+      || (p.availableDiskBytes !== null && (p.disk === 'low') !== ((p.availableDiskBytes as number) < recommendedDisk))
       || (p.platform === 'macos' && (p.virtualization === 'disabled' || p.virtualization === 'hypervisorUnavailable'))
       || (p.platform === 'windows' && p.virtualization === 'unsupported')) return null;
     return value as HostPreflight;

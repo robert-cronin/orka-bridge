@@ -167,8 +167,8 @@ const upgradeNone = { state: 'none', transaction: null, createdAt: null, sourceR
 
 async function handle(command: string, args?: Record<string, unknown>): Promise<unknown> {
   switch (command) {
-    case 'setup_requirements': return { memoryBytes: 6 * GiB, imageBytes, stateDiskBytes: 32 * GiB, downloadBytes: null };
-    case 'setup_preflight': return { platform: 'windows', virtualization: scenario === 'vmFailed' ? 'disabled' : 'ready', memory: 'ready', installedMemoryBytes: 32 * GiB, requiredMemoryBytes: 6 * GiB };
+    case 'setup_requirements': return { memoryBytes: 6 * GiB, imageBytes, stateDiskBytes: 32 * GiB, freeDiskBytes: 60 * GiB, downloadBytes: null };
+    case 'setup_preflight': return { platform: 'windows', virtualization: scenario === 'vmFailed' ? 'disabled' : 'ready', memory: 'ready', installedMemoryBytes: 32 * GiB, requiredMemoryBytes: 6 * GiB, disk: 'ready', availableDiskBytes: 200 * GiB, recommendedDiskBytes: 60 * GiB };
     case 'setup_status': return status();
     case 'setup_select_local':
       await wait(0.3);

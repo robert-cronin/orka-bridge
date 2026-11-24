@@ -59,6 +59,7 @@ fn setup_requirements() -> Option<bridge_engine::setup::SetupRequirements> {
 }
 #[tauri::command]
 async fn setup_preflight(
+    app: tauri::AppHandle,
     vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<Option<bridge_engine::setup::preflight::Preflight>, &'static str> {
     if vm.status() == LocalVmStatus::NotIntegrated
@@ -66,9 +67,14 @@ async fn setup_preflight(
     {
         return Ok(None);
     }
-    tauri::async_runtime::spawn_blocking(bridge_engine::setup::preflight::observe)
-        .await
-        .map_err(|_| "Computer requirements could not be read.")
+    // Native chooses the folder; the renderer never supplies a path.
+    let storage = app.path().app_local_data_dir().ok();
+    tauri::async_runtime::spawn_blocking(move || {
+        use bridge_engine::setup::preflight::{free_space, observe};
+        observe().map(|p| p.with_free_space(storage.as_deref().and_then(free_space)))
+    })
+    .await
+    .map_err(|_| "Computer requirements could not be read.")
 }
 #[tauri::command]
 async fn setup_open_help(topic: bridge_engine::setup::help::HelpTopic) -> Result<(), &'static str> {

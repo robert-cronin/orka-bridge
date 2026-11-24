@@ -14,6 +14,15 @@ pub enum Memory {
     Insufficient,
     Unknown,
 }
+/// Free space against the documented budget. Low is advice, not a failure: image work
+/// measures what it needs exactly and stops with NoSpace before writing what won't fit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Disk {
+    Ready,
+    Low,
+    Unknown,
+}
 pub use crate::runtime::types::{
     HostVirtualization as Virtualization, PreflightFailure as Failure,
 };
@@ -39,6 +48,9 @@ pub struct Preflight {
     memory: Memory,
     installed_memory_bytes: Option<u64>,
     required_memory_bytes: u64,
+    disk: Disk,
+    available_disk_bytes: Option<u64>,
+    recommended_disk_bytes: u64,
 }
 impl Preflight {
     pub fn new(platform: Platform, virtualization: Virtualization, installed: Option<u64>) -> Self {
@@ -54,7 +66,20 @@ impl Preflight {
             },
             installed_memory_bytes: installed,
             required_memory_bytes: required,
+            disk: Disk::Unknown,
+            available_disk_bytes: None,
+            recommended_disk_bytes: super::free_disk_budget(),
         }
+    }
+    /// Adds the free space observed where Bridge keeps its workspace. It never adds a failure.
+    pub fn with_free_space(mut self, available: Option<u64>) -> Self {
+        self.available_disk_bytes = available;
+        self.disk = match available {
+            Some(bytes) if bytes < self.recommended_disk_bytes => Disk::Low,
+            Some(_) => Disk::Ready,
+            None => Disk::Unknown,
+        };
+        self
     }
     pub fn failure(&self) -> Option<Failure> {
         match self.virtualization {
@@ -127,6 +152,46 @@ pub(crate) fn observe_native() -> Option<Preflight> {
     all(target_os = "macos", target_arch = "aarch64")
 )))]
 pub(crate) fn observe_native() -> Option<Preflight> {
+    None
+}
+
+/// Bytes available to this user on the volume holding `path`, or its nearest existing
+/// ancestor (the workspace folder doesn't exist before first setup). Read-only.
+pub fn free_space(path: &std::path::Path) -> Option<u64> {
+    let existing = path.ancestors().find(|p| p.exists())?;
+    available_bytes(existing)
+}
+#[cfg(unix)]
+fn available_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // statvfs fills the buffer on success; f_bavail counts blocks available to unprivileged users.
+    if unsafe { libc::statvfs(path.as_ptr(), info.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    u64::try_from((info.f_bavail as u128) * (info.f_frsize as u128)).ok()
+}
+#[cfg(windows)]
+fn available_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available = 0u64;
+    // The caller's available bytes honour per-user quotas, unlike the volume's total free bytes.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
+}
+#[cfg(not(any(unix, windows)))]
+fn available_bytes(_: &std::path::Path) -> Option<u64> {
     None
 }
 
@@ -213,13 +278,42 @@ mod tests {
             serde_json::to_value(p).unwrap(),
             serde_json::json!({
                 "platform": "macos", "virtualization": "unsupported", "memory": "ready",
-                "installedMemoryBytes": 8589934592u64, "requiredMemoryBytes": 6442450944u64
+                "installedMemoryBytes": 8589934592u64, "requiredMemoryBytes": 6442450944u64,
+                "disk": "unknown", "availableDiskBytes": null,
+                "recommendedDiskBytes": crate::setup::free_disk_budget()
             })
         );
         assert_eq!(
             serde_json::to_value(Failure::InsufficientMemory).unwrap(),
             "insufficientMemory"
         );
+    }
+
+    #[test]
+    fn free_space_is_advice_against_the_budget_and_never_a_failure() {
+        let budget = crate::setup::free_disk_budget();
+        for (available, expected) in [
+            (Some(budget - 1), Disk::Low),
+            (Some(0), Disk::Low),
+            (Some(budget), Disk::Ready),
+            (None, Disk::Unknown),
+        ] {
+            let p = Preflight::new(Platform::Windows, Virtualization::Ready, Some(8589934592))
+                .with_free_space(available);
+            assert_eq!(p.disk, expected);
+            assert_eq!(p.available_disk_bytes, available);
+            assert_eq!(p.failure(), None);
+            assert_eq!(before_image_work(Some(p), || 42), Ok(42));
+        }
+    }
+
+    #[test]
+    fn free_space_reads_the_nearest_existing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("not-yet").join("workspace");
+        let here = free_space(dir.path());
+        assert!(here.is_some_and(|bytes| bytes > 0));
+        assert!(free_space(&missing).is_some());
     }
 
     #[test]

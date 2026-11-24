@@ -9,7 +9,7 @@ import { firstTestPreference } from './first-test';
 import { openLocalSetup } from './test-navigation';
 import { noUpgrade } from './test-upgrade';
 
-const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, downloadBytes: 2800000000 };
+const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, freeDiskBytes: 64424509440, downloadBytes: 2800000000 };
 const assistantId = '3b2b93c4-375c-4815-9717-39852a96e414';
 const seed = '---\nname: "bridge-assistant"\nmodel: "gpt-5.6-terra"\nkmx:\n  schemaVersion: 1\n  runtime: orka\n---\n\n';
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };

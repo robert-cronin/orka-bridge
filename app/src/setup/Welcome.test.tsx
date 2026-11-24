@@ -8,7 +8,7 @@ import App from '../App';
 
 const preference = 'bridge.welcomeSeen.v1';
 const unselected = { selected: null, localVm: 'idle', model: 'locked' };
-const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, downloadBytes: 2800000000 };
+const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, freeDiskBytes: 64424509440, downloadBytes: 2800000000 };
 function native(initial: object = unselected, sizing: unknown = requirements) {
   vi.stubGlobal('isTauri', true);
   let status = initial;
@@ -34,7 +34,7 @@ test('Set up step by step remembers the welcome without starting a workspace, in
   await waitFor(() => expect(document.querySelector('#tab-status-Overview')?.textContent).toBe(''));
   expect(screen.getByText('Ask Bridge anything. Make your own agents when you’re ready.')).toBeTruthy();
   expect(screen.getByText('About 5 minutes, mostly a download').parentElement).toBe(screen.getByRole('button', { name: 'Set up Bridge' }).parentElement);
-  expect(screen.getByText('Downloads about 2.8 GB and uses 6.4 GB of memory while it runs.')).toBeTruthy();
+  expect(screen.getByText('Needs about 64.4 GB of free disk space, downloads about 2.8 GB, and uses 6.4 GB of memory while it runs.')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Set up step by step' }));
   const heading = await screen.findByRole('heading', { name: 'Clusters' });
   expect(document.activeElement).toBe(heading);
@@ -96,9 +96,9 @@ test('keyboard disclosure and opening local setup are inert; only Continue start
 });
 
 test('requirements render the native build values rather than fixed image or memory sizes', async () => {
-  localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, imageBytes: 18253611008, stateDiskBytes: 68719476736, downloadBytes: 2380070756 });
+  localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, imageBytes: 18253611008, stateDiskBytes: 68719476736, freeDiskBytes: 64424509440, downloadBytes: 2380070756 });
   render(<App />); await openLocalSetup();
-  expect(screen.getByText('Downloads about 2.4 GB. Needs virtualization and 8.6 GB of memory. Data disk can grow to 68.7 GB.')).toBeTruthy();
+  expect(screen.getByText('Downloads about 2.4 GB. Needs virtualization, 8.6 GB of memory and about 64.4 GB of free disk space. Data disk can grow to 68.7 GB.')).toBeTruthy();
   expect(screen.getByText('Use Orka on a Kubernetes cluster you already have.')).toBeTruthy();
   expect(screen.getAllByText(/step 1 of 4/i)).toHaveLength(1);
   expect(within(screen.getByRole('contentinfo')).queryByText(/step 1/)).toBeNull();
@@ -108,13 +108,14 @@ test('requirements render the native build values rather than fixed image or mem
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false);
   // WebKit exposes interpolated sibling text nodes as separate AXStaticText values.
   expect(imageDetails.childNodes).toHaveLength(1);
-  expect(screen.queryByText(/GiB|free disk|18.3 GB download/)).toBeNull();
+  // The free-disk figure is native's budget, never an estimate made here.
+  expect(screen.queryByText(/GiB|18.3 GB download/)).toBeNull();
 });
 
 test('debug requirements without a download retain RAM checks and disk facts without inventing a transfer', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { ...requirements, downloadBytes: null });
   render(<App />); await openLocalSetup();
-  expect(await screen.findByText('Needs virtualization and 6.4 GB of memory. Data disk can grow to 34.4 GB.')).toBeTruthy();
+  expect(await screen.findByText('Needs virtualization, 6.4 GB of memory and about 64.4 GB of free disk space. Data disk can grow to 34.4 GB.')).toBeTruthy();
   expect(screen.queryByText(/Downloads about/)).toBeNull();
   expect(screen.getByRole('region', { name: 'Computer requirements' })).toBeTruthy();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));

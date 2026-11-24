@@ -41,7 +41,7 @@ describe('preview backend replies', () => {
     expect(scenario).toBe('fresh');
     const requirements = await workspaceRequirements();
     expect(requirements).not.toBeNull();
-    expect(await readPreflight(requirements!.memoryBytes)).toMatchObject({ virtualization: 'ready' });
+    expect(await readPreflight(requirements!.memoryBytes, requirements!.freeDiskBytes)).toMatchObject({ virtualization: 'ready' });
     expect(await setupStatus()).toMatchObject({ ok: true, status: { selected: null, localVm: 'idle' } });
     expect(await selectLocal()).toMatchObject({ ok: true, status: { selected: 'localVm' } });
     expect((await upgradeCall('status')).ok).toBe(true);

@@ -1,12 +1,13 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 
-export type WorkspaceRequirements = { memoryBytes: number; imageBytes: number; stateDiskBytes: number; downloadBytes: number | null };
+// freeDiskBytes is the free space to have before setup; native stops cleanly if the exact need doesn't fit.
+export type WorkspaceRequirements = { memoryBytes: number; imageBytes: number; stateDiskBytes: number; downloadBytes: number | null; freeDiskBytes: number };
 export async function workspaceRequirements(): Promise<WorkspaceRequirements | null> {
   if (!isTauri()) return null;
   try {
     const value = await invoke<unknown>('setup_requirements');
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-    if (Object.keys(value).sort().join(',') !== 'downloadBytes,imageBytes,memoryBytes,stateDiskBytes') return null;
+    if (Object.keys(value).sort().join(',') !== 'downloadBytes,freeDiskBytes,imageBytes,memoryBytes,stateDiskBytes') return null;
     const { downloadBytes, ...sizes } = value as Record<string, unknown>;
     const positiveBytes = (size: unknown) => typeof size === 'number' && Number.isSafeInteger(size) && size > 0;
     if (!Object.values(sizes).every(positiveBytes) || downloadBytes !== null && !positiveBytes(downloadBytes)) return null;

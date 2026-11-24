@@ -251,7 +251,7 @@ press(find(main, "workspace-inside") { pressable($0, "What's inside") })
 currentStage = "local-size-block"; print("STAGE: \(currentStage)")
 wait("Local size facts did not settle") {
     let shown = shownStrings(main)
-    return [#"Needs virtualization and \d+\.\d GB of memory"#, #"image size is \d+\.\d GB after installation, not the amount downloaded"#, #"Data disk can grow to \d+\.\d GB"#].allSatisfy { pattern in
+    return [#"Needs virtualization, \d+\.\d GB of memory and about \d+\.\d GB of free disk space"#, #"image size is \d+\.\d GB after installation, not the amount downloaded"#, #"Data disk can grow to \d+\.\d GB"#].allSatisfy { pattern in
         shown.contains { $0.range(of: pattern, options: .regularExpression) != nil }
     } && !shown.contains { $0.hasPrefix("Reading") || $0.contains("Unavailable in this build") }
 }

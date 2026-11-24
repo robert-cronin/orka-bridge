@@ -6,7 +6,7 @@ import { readPreflight, type HostPreflight } from './preflight-state';
 import { formatRequirementGB } from './requirements';
 import { StatusIcon } from '../components/DesignSystem';
 
-export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void; onCluster: () => void }) {
+export default function Preflight({ requiredMemoryBytes, recommendedDiskBytes, onBlocked, onCluster }: { requiredMemoryBytes: number; recommendedDiskBytes: number; onBlocked: (blocked: boolean) => void; onCluster: () => void }) {
   const [result, setResult] = useState<HostPreflight | null>();
   const [checking, setChecking] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -16,6 +16,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
   const reason = useRef<HTMLParagraphElement>(null);
   const virtualization = result?.virtualization ?? 'unknown';
   const memory = result?.memory ?? 'unknown';
+  const lowDisk = !checking && result?.disk === 'low' && result.availableDiskBytes !== null ? result.availableDiskBytes : undefined;
   const failedVirtualization = !['ready', 'unknown'].includes(virtualization);
   const uncertain = !checking && (virtualization === 'unknown' || memory === 'unknown');
   const windowsFix = result?.platform === 'windows' && (virtualization === 'disabled' || virtualization === 'hypervisorUnavailable');
@@ -24,13 +25,13 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
   useEffect(() => {
     let active = true;
     onBlocked(true);
-    void readPreflight(requiredMemoryBytes).then(value => {
+    void readPreflight(requiredMemoryBytes, recommendedDiskBytes).then(value => {
       if (!active) return;
       setResult(value); setChecking(false);
       onBlocked(!!value && (value.memory === 'insufficient' || !['ready', 'unknown'].includes(value.virtualization)));
     });
     return () => { active = false; onBlocked(false); };
-  }, [attempt, requiredMemoryBytes, onBlocked]);
+  }, [attempt, requiredMemoryBytes, recommendedDiskBytes, onBlocked]);
   async function help(next: boolean) {
     setVirtualHelp(next);
     if (!next) return;
@@ -40,7 +41,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
     catch { setNotice("Couldn't open help. Check your PC manufacturer's virtualization instructions, or use a cluster instead."); }
   }
   async function copy() {
-    const details = ['Bridge computer requirements', `Platform: ${result?.platform ?? 'unknown'}`, `Virtualization: ${virtualization}`, `Installed memory check: ${memory}`, 'Private diagnostic text is not included.'].join('\n');
+    const details = ['Bridge computer requirements', `Platform: ${result?.platform ?? 'unknown'}`, `Virtualization: ${virtualization}`, `Installed memory check: ${memory}`, `Free disk space check: ${result?.disk ?? 'unknown'}`, 'Private diagnostic text is not included.'].join('\n');
     try { await navigator.clipboard.writeText(details); setNotice('Details copied.'); }
     catch { setNotice("Couldn't copy details. The check results are shown above."); }
   }
@@ -59,6 +60,10 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
         <Disclosure label="About this check" open={memoryHelp} controls="preflight-memory-help" onOpenChange={setMemoryHelp}>
         {memoryHelp && <div id="preflight-memory-help"><p>This is installed RAM, not currently free memory.</p>
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
+      </section>}
+      {lowDisk !== undefined && <section aria-label="Free disk space">
+        <p className="preflight-result" role="status"><StatusIcon state="needs-you" /><span>{`This computer has ${formatRequirementGB(lowDisk)} of free disk space; Bridge recommends about ${formatRequirementGB(recommendedDiskBytes)}. Setup stops before it runs out of space, so free some space first if you can.`}</span></p>
+        <Button type="button" kind="secondary" onClick={() => { setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>
       </section>}
     </div>
     <p className={!status || !checking && !uncertain && attempt === 0 ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{status}</p>

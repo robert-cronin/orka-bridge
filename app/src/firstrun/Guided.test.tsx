@@ -14,7 +14,7 @@ function nativeSetup(status: Record<string, unknown>) {
   mockIPC(command => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return status;
-    if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, imageBytes: 3e9, stateDiskBytes: 32e9, downloadBytes: null };
+    if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, imageBytes: 3e9, stateDiskBytes: 32e9, freeDiskBytes: 64424509440, downloadBytes: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
 }

@@ -7,8 +7,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 import Setup from './SetupHarness';
 import App from '../App';
 
-const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, downloadBytes: null };
-const ready = { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: 8589934592, requiredMemoryBytes: 6442450944 };
+const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, freeDiskBytes: 64424509440, downloadBytes: null };
+const ready = { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: 8589934592, requiredMemoryBytes: 6442450944, disk: 'ready', availableDiskBytes: 128849018880, recommendedDiskBytes: 64424509440 };
 async function native(preflight: unknown = ready, integrated = true, onPlace = vi.fn()) {
   vi.stubGlobal('isTauri', true);
   localStorage.setItem('bridge.welcomeSeen.v1', '1');
