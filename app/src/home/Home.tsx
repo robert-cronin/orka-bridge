@@ -4,7 +4,7 @@ import { Button } from '../components/Button';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
 import Chat from '../designer/Chat';
 import { type AgentEntry, listDocuments } from '../designer/documents-api';
-import { assistantLabel, assistantName } from './assistant';
+import { type AssistantFailure, assistantLabel, assistantName } from './assistant';
 import { type HomeAction, homeNext } from './next';
 import './home.css';
 
@@ -12,7 +12,7 @@ import './home.css';
 // its Chat view in Designer, and it runs in the workspace on this computer.
 // Bridge's built-in assistant is the default; it is created on request, never just by opening Home.
 export default function Home({ active, revision, preferred, assistantError, assistantBusy = false, blocked: placeBlocked, blockedFor, onAddAssistant, onOpenAgent, onChooseWorkspace }: {
-  active: boolean; revision: number; preferred?: string; assistantError?: string; assistantBusy?: boolean; blocked?: string; blockedFor?: (documentId: string) => string | undefined;
+  active: boolean; revision: number; preferred?: string; assistantError?: AssistantFailure; assistantBusy?: boolean; blocked?: string; blockedFor?: (documentId: string) => string | undefined;
   onAddAssistant?: () => void; onOpenAgent: (documentId: string) => void; onChooseWorkspace: () => void;
 }) {
   // null means the list could not be read, which is different from having no agents.

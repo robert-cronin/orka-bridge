@@ -24,6 +24,20 @@ export function assistantInstructions(tools: readonly string[]) {
   ].filter(Boolean).join('\n');
 }
 
+// Why the assistant couldn't be set up, as a finite kind; the words live in one table.
+export type AssistantFailure = 'listUnreadable' | 'fileUnavailable' | 'notSaved';
+export const assistantFailureCopy: Record<AssistantFailure, string> = {
+  listUnreadable: 'Bridge couldn’t read your agents.',
+  fileUnavailable: 'Its file couldn’t be opened. Check it in Designer.',
+  notSaved: 'Its file couldn’t be created or saved.',
+};
+export class AssistantError extends Error {
+  constructor(readonly kind: AssistantFailure) { super(assistantFailureCopy[kind]); }
+}
+export function assistantFailure(error: unknown): AssistantFailure {
+  return error instanceof AssistantError ? error.kind : 'notSaved';
+}
+
 let pending: Promise<string> | undefined;
 // Returns the assistant's document id, creating and filling it the first time. Concurrent callers share one creation.
 export function ensureAssistant(): Promise<string> {
@@ -33,9 +47,9 @@ export function ensureAssistant(): Promise<string> {
 
 async function create(): Promise<string> {
   const list = await listDocuments();
-  if (!list) throw Error('Bridge couldn’t read your agents.');
+  if (!list) throw new AssistantError('listUnreadable');
   const existing = list.find(entry => entry.name === assistantName);
-  if (existing && !existing.available) throw Error('Bridge’s assistant file couldn’t be opened. Check it in Designer.');
+  if (existing && !existing.available) throw new AssistantError('fileUnavailable');
   const catalog = await readWorkspaceCatalog(new AbortController().signal);
   const id = existing?.id ?? await createDocument(assistantName, catalog?.defaultModel ?? undefined);
   const seed = await agentCall('agent_open', undefined, id);

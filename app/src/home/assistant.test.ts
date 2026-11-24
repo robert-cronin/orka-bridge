@@ -1,7 +1,7 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { readForm } from '../designer/agent-form';
-import { assistantInstructions, assistantName, ensureAssistant } from './assistant';
+import { assistantFailure, assistantInstructions, assistantName, ensureAssistant } from './assistant';
 
 const id = '3b2b93c4-375c-4815-9717-39852a96e414';
 // Native's created_seed for a new agent.
@@ -70,4 +70,13 @@ test('without a readable catalog it adds only web_fetch', async () => {
   native({ catalog: false });
   await ensureAssistant();
   expect(readForm(saved()).tools.map(tool => tool.name)).toEqual(['web_fetch']);
+});
+
+test('failures are reported as a kind, never as native text', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => { if (command === 'agents_list') throw Error('SECRET_MARKER'); throw Error(command); });
+  const error = await ensureAssistant().catch((e: unknown) => e);
+  expect(assistantFailure(error)).toBe('listUnreadable');
+  expect(String(error)).not.toContain('SECRET_MARKER');
+  expect(assistantFailure(Error('SECRET_MARKER'))).toBe('notSaved');
 });

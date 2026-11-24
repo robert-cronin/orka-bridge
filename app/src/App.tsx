@@ -13,7 +13,7 @@ import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep, withoutStepCount } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
 import './firstrun/firstrun.css';
-import { ensureAssistant } from './home/assistant';
+import { type AssistantFailure, assistantFailure, ensureAssistant } from './home/assistant';
 import Home from './home/Home';
 import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
@@ -270,7 +270,7 @@ export default function App() {
   }, [page, workspaceReady, workspaceBusy, setup?.model, model]);
   // Chat-first setup ends in a chat with Bridge's built-in assistant instead of the example agent's automatic test.
   const [homeAgent, setHomeAgent] = useState<string>();
-  const [assistantError, setAssistantError] = useState<string>();
+  const [assistantError, setAssistantError] = useState<AssistantFailure>();
   const [assistantBusy, setAssistantBusy] = useState(false);
   const openAssistant = useCallback(async () => {
     setAssistantError(undefined); setAssistantBusy(true);
@@ -278,7 +278,7 @@ export default function App() {
       setHomeAgent(await ensureAssistant());
       setAgentsRevision(value => value + 1);
     } catch (error) {
-      setAssistantError(error instanceof Error ? error.message : String(error));
+      setAssistantError(assistantFailure(error));
     }
     setAssistantBusy(false);
     // Opened once either way: a failure is shown on Home, with a way to try again.
