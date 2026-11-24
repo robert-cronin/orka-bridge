@@ -10,7 +10,7 @@ import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
 import FileMenu from './chrome/FileMenu';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
-import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
+import { finishGuidedFirstRun, guidedFirstRun, guidedStep, withoutStepCount } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
 import './firstrun/firstrun.css';
 import Home from './home/Home';
@@ -290,7 +290,7 @@ export default function App() {
     Overview: welcome ? '' : overviewCounts,
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
-    Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : view.tabLine,
+    Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : guided ? withoutStepCount(view.tabLine) : view.tabLine,
   };
   const tabTone = exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.cancellation === 'unconfirmed' ? 'needs-you' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const catalogConnected = run?.modelConnected ?? model === 'connected';
@@ -339,7 +339,7 @@ export default function App() {
     setDocumentAction({ id: ++actionSequence.current, documentId: id, action });
   };
   const footer = [
-    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine,
+    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : guided ? withoutStepCount(view.footerLine) : view.footerLine,
     exampleState === 'loaded' && (saveState !== 'saved' || saveNotice.id === documentId && saveNotice.edited) ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
   ].filter(Boolean);
   const checkFirstTest = () => {

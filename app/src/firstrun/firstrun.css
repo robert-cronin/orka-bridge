@@ -10,3 +10,5 @@
 .guided-step-dot svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .guided-exit { margin-inline: var(--space-3); }
 @media (max-width: 600px) { .guided-steps li:not(.current) { font-size: 0; gap: 0; } }
+/* The header counts three guided steps, so the choice card's own "Step 1 of 4" is not shown while guided. */
+.app-shell.guided .workspace-choice-step { display: none; }

@@ -24,3 +24,8 @@ export function guidedStep(setupStep: number, done: boolean): number {
   if (done) return guidedSteps.length;
   return setupStep >= 4 ? 2 : setupStep === 3 ? 1 : 0;
 }
+
+// The header already counts the guided steps, so a setup line drops its own "step 2 of 4" while guided.
+export function withoutStepCount(line: string) {
+  return line.replace(/,? ?step \d+ of \d+$/i, '');
+}
