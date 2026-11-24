@@ -4,6 +4,7 @@ import { type Status, StatusIcon, StatusPill } from '../components/DesignSystem'
 import { Disclosure } from '../components/Disclosure';
 import { agentInfo } from '../designer/agent-api';
 import type { ModelState } from './Model';
+import { formatElapsed, phaseState, setupPhases, currentPhase, usePhaseTimes } from './phases';
 import { canQueueModel, infraProgress, setupView } from './progress';
 import Recovery from './Recovery';
 import { modelDetails } from './recovery-info';
@@ -63,6 +64,8 @@ export function SetupProgress(props: Props) {
   const needsModel = props.modelState === 'connected' && props.modelUnavailable && props.firstCheck === 'unknown';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
+  const stage = stopping ? undefined : currentPhase(status);
+  const elapsed = usePhaseTimes(stage, progress ?? undefined);
   const stateLine = error ? 'Workspace status is unavailable.' : props.updating ? 'Updating the workspace. Your agent files are kept.' : props.updateBlocked ? 'Workspace recovery needs attention.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
     : paused ? 'Setup is paused. Choose Start again to resume.' : status.localVm === 'starting' ? 'Starting the workspace…'
     : status.localVm === 'closing' ? 'Stopping the workspace…'
@@ -76,14 +79,21 @@ export function SetupProgress(props: Props) {
       aria-valuenow={infra.value === null ? undefined : Math.round(infra.value * 100)} className={`infra-bar${infra.value === null ? ' indeterminate' : ''}`}>
       <span style={infra.value === null ? undefined : { width: `${Math.round(infra.value * 100)}%` }} /></div>
       <p className="muted">{infra.text ?? (status.localVm === 'starting' ? 'Starting the workspace…' : stateLine)}</p></>}
-    <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} controls="workspace-progress-details" onOpenChange={setDetails}>
+    {infra && <div className="setup-phases" role="group" aria-label="Workspace setup stages">
+      {setupPhases.map(phase => {
+        const state = phaseState(phase.id, stage, ready);
+        const ms = elapsed(phase.id);
+        return <p key={phase.id} className={`setup-phase phase-${state}`}>
+          <StatusIcon state={state === 'done' ? 'passed' : state === 'current' ? 'running' : 'not-started'} />
+          <span>{phase.label}</span>
+          <span className="muted">{ms === undefined ? state === 'waiting' ? 'Waiting' : '' : state === 'current' ? `${formatElapsed(ms)} so far` : formatElapsed(ms)}</span>
+        </p>;
+      })}
+    </div>}
+    {status.localVmError && <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} controls="workspace-progress-details" onOpenChange={setDetails}>
       {details && <div id="workspace-progress-details" className="workspace-progress-details">
-        <dl><div><dt>Checking cluster files</dt><dd>{status.localVm === 'preparing' || progress?.phase === 'verifying' ? 'In progress' : ready || copying || status.localVm === 'starting' ? 'Checked' : 'Waiting'}</dd></div>
-          <div><dt>Installing cluster files</dt><dd>{ready || status.localVm === 'starting' ? 'Installed' : copying ? 'In progress' : 'Waiting'}</dd></div>
-          <div><dt>Starting the workspace</dt><dd>{ready ? 'Ready' : status.localVm === 'starting' ? 'In progress' : 'Waiting'}</dd></div></dl>
-        {progress && status.localVm !== 'starting' && progress.phase !== 'starting' && <p className="muted">{Math.floor(progress.elapsedMs / 1000)} seconds {progress.phase === 'verifying' ? 'checking files' : 'installing files'}.</p>}
-        {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
-      </div>}</Disclosure>
+        <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>
+      </div>}</Disclosure>}
   </>);
   return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
     <div className="steps-head"><h2>Workspace</h2><StatusPill state={workspaceReady ? 'passed' : pill}>{workspaceWord}</StatusPill></div>

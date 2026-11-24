@@ -76,7 +76,8 @@ test('failed Connect refreshes retained guest details without locking the runnin
   const user = userEvent.setup(); mockIPC(ipc); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.queryByText(detail)).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
+  // Details appear once native retains something to show, and start folded.
+  await user.click(await screen.findByRole('button', { name: 'Show details' }));
   expect(await screen.findByText(detail)).toBeTruthy();
   expect(screen.getByText('Your workspace is ready on this computer.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Check again' }).matches(':disabled')).toBe(false);

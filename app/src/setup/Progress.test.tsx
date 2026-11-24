@@ -67,8 +67,8 @@ test.each([
   } else expect(region.querySelector('.button-primary')).toBeNull();
 });
 
-test('four fixed steps contain one native file bar and expandable details', async () => {
-  native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
+test('four fixed steps contain one native file bar and named, timed stages', async () => {
+  native(); render(<App />); await openLocalSetup();
   await screen.findByRole('heading', { name: 'This computer' });
   expect(screen.getByText('Getting your workspace ready', { selector: 'p' })).toBeTruthy();
   const steps = screen.getByRole('list', { name: 'Setup steps' });
@@ -79,10 +79,10 @@ test('four fixed steps contain one native file bar and expandable details', asyn
   expect(Number(bar.getAttribute('aria-valuenow'))).toBe(40);
   expect(bar.closest('li')).toBe(within(steps).getAllByRole('listitem')[1]);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).matches(':disabled')).toBe(false);
-  expect(screen.queryByText('Checking cluster files')).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
-  expect(screen.getByText('Checking cluster files')).toBeTruthy();
-  expect(screen.getByText('20 seconds installing files.')).toBeTruthy();
+  // The named stages are shown without opening anything, each with its own time.
+  const stages = screen.getByRole('group', { name: 'Workspace setup stages' });
+  expect([...stages.querySelectorAll('.setup-phase')].map(row => row.textContent)).toEqual(['Check the cluster files', 'Install the cluster files20 s so far', 'Start the workspaceWaiting']);
+  expect(screen.queryByRole('button', { name: 'Show details' })).toBeNull();
 });
 
 test.each(['installing', 'starting'])('tab, footer and list agree on workspace step during %s', async state => {
@@ -143,9 +143,9 @@ test('readiness removes the bar without moving completed rows', async () => {
 
 test('startup details never reuse the previous file phase timing', async () => {
   native('starting', { phase: 'materializing', bytes: 100, totalBytes: 100, elapsedMs: 54000, remainingMs: 1000 });
-  const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
-  expect(screen.queryByText(/54 seconds|second left|in this file step/)).toBeNull();
+  render(<App />); await openLocalSetup();
+  expect(screen.getByRole('group', { name: 'Workspace setup stages' }).textContent).toContain('Start the workspace0 s so far');
+  expect(screen.queryByText(/54 s|54 seconds|second left|in this file step/)).toBeNull();
   expect(screen.getByRole('progressbar').hasAttribute('aria-valuenow')).toBe(false);
 });
 

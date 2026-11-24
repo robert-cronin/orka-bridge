@@ -106,3 +106,8 @@
 }
 /* A route whose computer check failed is not the recommended one. The chip returns when the check passes. */
 .workspace-option:has(.workspace-failure-explanation) > .chip { display: none; }
+/* Named stages inside "Get your workspace ready", each with its own time. */
+.setup-phases { display: grid; gap: 2px; margin: var(--space-2) 0 0; padding: 0; list-style: none; font-size: var(--size-body); }
+.setup-phase { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); padding: 2px 0; }
+.setup-phase .status-icon { width: 16px; height: 16px; }
+.setup-phase.phase-waiting > span:nth-of-type(1) { color: var(--color-text-secondary); }
