@@ -45,6 +45,8 @@ describe('Estuary theme contract', () => {
     const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'));
     expect(compact).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*76px;[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status status"/);
     expect(compact).toMatch(/\.brand b, \.nav-group-label, \.tab-copy small\s*\{\s*display:\s*none/);
+    // The compact bar sits on the chrome like main's footer: native walks sample the window corner as chrome.
+    expect(compact).toMatch(/\.status-bar\s*\{[^}]*background:\s*transparent;[^}]*box-shadow:\s*none/);
     // The rail keeps the sidebar's 8px padding, so the window's left edge never lands on a page button.
     expect(compact).not.toMatch(/\.page-nav\s*\{[^}]*padding/);
     expect(compact).not.toMatch(/\.tab-copy\s*\{[^}]*display:\s*none|\.tab-copy b[^{]*\{[^}]*display:\s*none|clip-path|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)|\.host-label[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
