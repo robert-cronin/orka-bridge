@@ -104,3 +104,5 @@
   .steps-four > li { grid-template-columns: 20px minmax(0, 1fr); }
   .step-result { grid-column: 2; }
 }
+/* A route whose computer check failed is not the recommended one. The chip returns when the check passes. */
+.workspace-option:has(.workspace-failure-explanation) > .chip { display: none; }
