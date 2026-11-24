@@ -58,6 +58,8 @@ Use the exact app release link in your invitation, in
 A **Bridge VM images** release is not an app: Bridge downloads those images
 itself. The Windows runtime source archive isn't needed to run Bridge.
 See the [release notes](release-notes.md) for the pinned Orka version.
+To check a release on a clean machine and record the results, use the
+[release install checklist](release-install-checklist.md).
 
 Unsigned apps trigger security warnings. Only make an exception for the app
 you meant to download from this repository; keep system protections enabled.
